@@ -16,26 +16,28 @@ jobs:
       - name: 📁 Create directories
         run: mkdir -p links .backup
 
-      - name: 📥 Install rclone
+      - name: 📥 Install rclone and unzip
         run: |
+          sudo apt update
+          sudo apt install -y unzip
           curl https://rclone.org/install.sh | sudo bash
 
-      - name: 🔁 Restore from pCloud backup using rclone
+      - name: 🔁 Create rclone config file
         env:
           PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
           PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
         run: |
-          # Create rclone config file
-          cat <<EOF > rclone.conf
-[pcloud]
-type = webdav
-url = https://webdav.pcloud.com
-vendor = other
-user = $PCLOUD_USER
-pass = $PCLOUD_PASS
-EOF
-          # Copy backup if exists
-          rclone --config rclone.conf copy pcloud:autovps.zip . || echo "❌ No backup found"
+          mkdir -p ~/.config/rclone
+          echo "[pcloud]" > ~/.config/rclone/rclone.conf
+          echo "type = webdav" >> ~/.config/rclone/rclone.conf
+          echo "url = https://webdav.pcloud.com" >> ~/.config/rclone/rclone.conf
+          echo "vendor = other" >> ~/.config/rclone/rclone.conf
+          echo "user = $PCLOUD_USER" >> ~/.config/rclone/rclone.conf
+          echo "pass = $PCLOUD_PASS" >> ~/.config/rclone/rclone.conf
+
+      - name: 🔁 Restore from pCloud backup using rclone
+        run: |
+          rclone copy pcloud:autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip"
 
       - name: 🔐 Start tmate (SSH Access)
@@ -54,20 +56,9 @@ EOF
           file_pattern: 'links/*.txt'
 
       - name: 📤 Backup & upload VPS state using rclone
-        env:
-          PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
-          PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
         run: |
-          cat <<EOF > rclone.conf
-[pcloud]
-type = webdav
-url = https://webdav.pcloud.com
-vendor = other
-user = $PCLOUD_USER
-pass = $PCLOUD_PASS
-EOF
           zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          rclone --config rclone.conf copy autovps.zip pcloud: || echo "❌ Upload failed"
+          rclone copy autovps.zip pcloud: || echo "❌ Upload failed"
 
       - name: ⏳ Keep VPS Alive
         run: |
