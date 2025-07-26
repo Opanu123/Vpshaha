@@ -1,56 +1,60 @@
-""name: Auto VPS with pCloud Backup
+name: Auto VPS with pCloud Backup
 
-on: schedule: - cron: "0 */6 * * *"  # Every 6 hours workflow_dispatch:
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # Every 6 hours
+  workflow_dispatch:
 
-jobs: start-vps: runs-on: ubuntu-latest timeout-minutes: 370
+jobs:
+  start-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 370
+    steps:
+      - name: ⬇️ Checkout Repo
+        uses: actions/checkout@v3
 
-steps:
-  - name: ⬇️ Checkout Repo
-    uses: actions/checkout@v3
+      - name: 📁 Create directories
+        run: mkdir -p links .backup
 
-  - name: 📁 Create directories
-    run: mkdir -p links .backup
+      - name: 🔁 Restore from pCloud (WebDAV)
+        run: |
+          sudo apt update
+          sudo apt install -y cadaver unzip
+          mkdir restore
+          cd restore
+          echo "open https://webdav.pcloud.com
+          user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+          mget autovps.zip
+          bye" > restorecmds.txt
+          cadaver -r restorecmds.txt || echo "❌ No backup found"
+          unzip -o autovps.zip || echo "❌ Failed to unzip"
 
-  - name: 🔁 Restore from pCloud (WebDAV)
-    run: |
-      sudo apt update
-      sudo apt install -y cadaver unzip
-      mkdir restore
-      cd restore
-      echo "open https://webdav.pcloud.com
-      user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-      mget autovps.zip
-      bye" > restorecmds.txt
-      cadaver -r restorecmds.txt || echo "❌ No backup found"
-      unzip -o autovps.zip || echo "❌ Failed to unzip"
+      - name: 🔐 Start tmate (SSH Access)
+        run: |
+          sudo apt install -y tmate
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+          echo "$SSH" > links/autovps.txt
+          echo "✅ SSH Ready: $SSH"
 
-  - name: 🔐 Start tmate (SSH Access)
-    run: |
-      sudo apt install -y tmate
-      tmate -S /tmp/tmate.sock new-session -d
-      tmate -S /tmp/tmate.sock wait tmate-ready
-      SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-      echo "$SSH" > links/autovps.txt
-      echo "✅ SSH Ready: $SSH"
+      - name: 📄 Commit SSH info to repo
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🔁 Updated SSH link"
+          file_pattern: 'links/*.txt'
 
-  - name: 📄 Commit SSH info to repo
-    uses: stefanzweifel/git-auto-commit-action@v5
-    with:
-      commit_message: "🔁 Updated SSH link"
-      file_pattern: 'links/*.txt'
+      - name: 💾 Backup & Upload to pCloud
+        if: always()
+        run: |
+          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
+          echo "open https://webdav.pcloud.com
+          user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+          put autovps.zip
+          bye" > uploadcmds.txt
+          cadaver -r uploadcmds.txt || echo "❌ Upload failed"
 
-  - name: 💾 Backup & Upload to pCloud
-    if: always()
-    run: |
-      zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-      echo "open https://webdav.pcloud.com
-      user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-      put autovps.zip
-      bye" > uploadcmds.txt
-      cadaver -r uploadcmds.txt || echo "❌ Upload failed"
-
-  - name: ⏳ Keep VPS Alive
-    run: |
-      echo "⏳ Sleeping for 6 hours..."
-      sleep 21600"
-
+      - name: ⏳ Keep VPS Alive
+        run: |
+          echo "⏳ Sleeping for 6 hours..."
+          sleep 21600
