@@ -22,10 +22,12 @@ jobs:
           sudo apt install -y cadaver unzip
           mkdir restore
           cd restore
-          echo "open https://webdav.pcloud.com
-          user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-          mget autovps.zip
-          bye" > restorecmds.txt
+          cat <<EOF > restorecmds.txt
+open https://webdav.pcloud.com
+user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+mget autovps.zip
+bye
+EOF
           cadaver -r restorecmds.txt || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip"
 
@@ -48,10 +50,12 @@ jobs:
         if: always()
         run: |
           zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          echo "open https://webdav.pcloud.com
-          user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-          put autovps.zip
-          bye" > uploadcmds.txt
+          cat <<EOF > uploadcmds.txt
+open https://webdav.pcloud.com
+user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+put autovps.zip
+bye
+EOF
           cadaver -r uploadcmds.txt || echo "❌ Upload failed"
 
       - name: ⏳ Keep VPS Alive
