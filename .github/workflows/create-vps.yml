@@ -1,4 +1,4 @@
-name: Auto VPS Backup to pCloud
+""name: Auto VPS with pCloud Backup
 
 on: schedule: - cron: "0 */6 * * *"  # Every 6 hours workflow_dispatch:
 
@@ -8,24 +8,21 @@ steps:
   - name: ⬇️ Checkout Repo
     uses: actions/checkout@v3
 
-  - name: 🛠️ Install zip and curl
-    run: |
-      sudo apt update && sudo apt install -y zip curl
-
   - name: 📁 Create directories
     run: mkdir -p links .backup
 
-  - name: 🔁 Restore from pCloud (Optional)
-    env:
-      PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
-      PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
+  - name: 🔁 Restore from pCloud (WebDAV)
     run: |
-      if curl -u "$PCLOUD_USER:$PCLOUD_PASS" -s -f -O https://webdav.pcloud.com/autovps.zip; then
-        echo "📦 Restoring backup from pCloud..."
-        unzip -o autovps.zip || echo "❌ Failed to unzip"
-      else
-        echo "⚠️ No backup found on pCloud. Starting fresh."
-      fi
+      sudo apt update
+      sudo apt install -y cadaver unzip
+      mkdir restore
+      cd restore
+      echo "open https://webdav.pcloud.com
+      user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+      mget autovps.zip
+      bye" > restorecmds.txt
+      cadaver -r restorecmds.txt || echo "❌ No backup found"
+      unzip -o autovps.zip || echo "❌ Failed to unzip"
 
   - name: 🔐 Start tmate (SSH Access)
     run: |
@@ -44,15 +41,16 @@ steps:
 
   - name: 💾 Backup & Upload to pCloud
     if: always()
-    env:
-      PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
-      PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
     run: |
       zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-      curl -u "$PCLOUD_USER:$PCLOUD_PASS" -T autovps.zip https://webdav.pcloud.com/autovps.zip || echo "❌ Failed to upload"
+      echo "open https://webdav.pcloud.com
+      user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
+      put autovps.zip
+      bye" > uploadcmds.txt
+      cadaver -r uploadcmds.txt || echo "❌ Upload failed"
 
-  - name: 💤 Keep VPS Alive
+  - name: ⏳ Keep VPS Alive
     run: |
       echo "⏳ Sleeping for 6 hours..."
-      sleep 21600
+      sleep 21600"
 
