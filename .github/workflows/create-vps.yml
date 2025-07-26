@@ -1,4 +1,4 @@
-name: Auto VPS with pCloud Backup
+name: Auto VPS with pCloud Backup (rclone)
 
 on:
   schedule:
@@ -16,19 +16,26 @@ jobs:
       - name: 📁 Create directories
         run: mkdir -p links .backup
 
-      - name: 🔁 Restore from pCloud (WebDAV)
+      - name: 📥 Install rclone
         run: |
-          sudo apt update
-          sudo apt install -y cadaver unzip
-          mkdir restore
-          cd restore
-          cat <<EOF > restorecmds.txt
-open https://webdav.pcloud.com
-user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-mget autovps.zip
-bye
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: 🔁 Restore from pCloud backup using rclone
+        env:
+          PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
+          PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
+        run: |
+          # Create rclone config file
+          cat <<EOF > rclone.conf
+[pcloud]
+type = webdav
+url = https://webdav.pcloud.com
+vendor = other
+user = $PCLOUD_USER
+pass = $PCLOUD_PASS
 EOF
-          cadaver -r restorecmds.txt || echo "❌ No backup found"
+          # Copy backup if exists
+          rclone --config rclone.conf copy pcloud:autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip"
 
       - name: 🔐 Start tmate (SSH Access)
@@ -46,17 +53,21 @@ EOF
           commit_message: "🔁 Updated SSH link"
           file_pattern: 'links/*.txt'
 
-      - name: 💾 Backup & Upload to pCloud
-        if: always()
+      - name: 📤 Backup & upload VPS state using rclone
+        env:
+          PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
+          PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
         run: |
-          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          cat <<EOF > uploadcmds.txt
-open https://webdav.pcloud.com
-user ${{ secrets.PCLOUD_USER }} ${{ secrets.PCLOUD_PASS }}
-put autovps.zip
-bye
+          cat <<EOF > rclone.conf
+[pcloud]
+type = webdav
+url = https://webdav.pcloud.com
+vendor = other
+user = $PCLOUD_USER
+pass = $PCLOUD_PASS
 EOF
-          cadaver -r uploadcmds.txt || echo "❌ Upload failed"
+          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
+          rclone --config rclone.conf copy autovps.zip pcloud: || echo "❌ Upload failed"
 
       - name: ⏳ Keep VPS Alive
         run: |
