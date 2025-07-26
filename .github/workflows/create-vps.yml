@@ -1,52 +1,58 @@
-name: Auto VPS with pCloud Backup (No Rclone)
+name: Auto VPS Backup to pCloud
 
-on:
-  schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
-  workflow_dispatch:
+on: schedule: - cron: "0 */6 * * *"  # Every 6 hours workflow_dispatch:
 
-jobs:
-  start-vps:
-    runs-on: ubuntu-latest
-    timeout-minutes: 370
+jobs: start-vps: runs-on: ubuntu-latest timeout-minutes: 370
 
-    steps:
-      - name: ⬇️ Checkout Repo
-        uses: actions/checkout@v3
+steps:
+  - name: ⬇️ Checkout Repo
+    uses: actions/checkout@v3
 
-      - name: 📁 Create dirs
-        run: mkdir -p links .backup
+  - name: 🛠️ Install zip and curl
+    run: |
+      sudo apt update && sudo apt install -y zip curl
 
-      - name: 🔁 Restore from pCloud via WebDAV
-        run: |
-          echo "🔁 Trying to download backup..."
-          curl -u "${{ secrets.PCLOUD_EMAIL }}:${{ secrets.PCLOUD_PASS }}" \
-            -o autovps.zip \
-            https://webdav.pcloud.com/vps/autovps.zip || echo "⚠️ No backup found"
-          unzip -o autovps.zip || echo "❌ Failed to unzip"
+  - name: 📁 Create directories
+    run: mkdir -p links .backup
 
-      - name: 🔐 Start SSH via tmate
-        run: |
-          sudo apt update && sudo apt install -y tmate
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH" > links/autovps.txt
-          echo "✅ SSH Ready: $SSH"
+  - name: 🔁 Restore from pCloud (Optional)
+    env:
+      PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
+      PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
+    run: |
+      if curl -u "$PCLOUD_USER:$PCLOUD_PASS" -s -f -O https://webdav.pcloud.com/autovps.zip; then
+        echo "📦 Restoring backup from pCloud..."
+        unzip -o autovps.zip || echo "❌ Failed to unzip"
+      else
+        echo "⚠️ No backup found on pCloud. Starting fresh."
+      fi
 
-      - name: 📄 Save SSH link to repo
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/*.txt'
+  - name: 🔐 Start tmate (SSH Access)
+    run: |
+      sudo apt install -y tmate
+      tmate -S /tmp/tmate.sock new-session -d
+      tmate -S /tmp/tmate.sock wait tmate-ready
+      SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+      echo "$SSH" > links/autovps.txt
+      echo "✅ SSH Ready: $SSH"
 
-      - name: 💾 Backup & Upload to pCloud
-        if: always()
-        run: |
-          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          curl -T autovps.zip \
-            -u "${{ secrets.PCLOUD_EMAIL }}:${{ secrets.PCLOUD_PASS }}" \
-            https://webdav.pcloud.com/vps/autovps.zip || echo "❌ Failed to upload"
+  - name: 📄 Commit SSH info to repo
+    uses: stefanzweifel/git-auto-commit-action@v5
+    with:
+      commit_message: "🔁 Updated SSH link"
+      file_pattern: 'links/*.txt'
 
-      - name: ⏳ Keep VPS Alive
-        run: sleep 21600  # 6 hours
+  - name: 💾 Backup & Upload to pCloud
+    if: always()
+    env:
+      PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
+      PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
+    run: |
+      zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
+      curl -u "$PCLOUD_USER:$PCLOUD_PASS" -T autovps.zip https://webdav.pcloud.com/autovps.zip || echo "❌ Failed to upload"
+
+  - name: 💤 Keep VPS Alive
+    run: |
+      echo "⏳ Sleeping for 6 hours..."
+      sleep 21600
+
