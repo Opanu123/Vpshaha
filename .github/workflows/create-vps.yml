@@ -1,4 +1,4 @@
-name: Auto VPS with pCloud Backup (rclone)
+name: Auto VPS with Filebase Backup
 
 on:
   schedule:
@@ -9,58 +9,72 @@ jobs:
   start-vps:
     runs-on: ubuntu-latest
     timeout-minutes: 370
+
     steps:
       - name: ⬇️ Checkout Repo
         uses: actions/checkout@v3
 
-      - name: 📁 Create directories
-        run: mkdir -p links .backup
+      - name: 📁 Create required folders
+        run: mkdir -p .backup links restore
 
-      - name: 📥 Install rclone and unzip
-        run: |
-          sudo apt update
-          sudo apt install -y unzip
-          curl https://rclone.org/install.sh | sudo bash
+      - name: 📥 Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: 🔁 Create rclone config file
+      - name: 🔁 Restore from Filebase (S3)
         env:
-          PCLOUD_USER: ${{ secrets.PCLOUD_USER }}
-          PCLOUD_PASS: ${{ secrets.PCLOUD_PASS }}
+          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
+          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
+          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          mkdir -p ~/.config/rclone
-          echo "[pcloud]" > ~/.config/rclone/rclone.conf
-          echo "type = webdav" >> ~/.config/rclone/rclone.conf
-          echo "url = https://webdav.pcloud.com" >> ~/.config/rclone/rclone.conf
-          echo "vendor = other" >> ~/.config/rclone/rclone.conf
-          echo "user = $PCLOUD_USER" >> ~/.config/rclone/rclone.conf
-          echo "pass = $PCLOUD_PASS" >> ~/.config/rclone/rclone.conf
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
 
-      - name: 🔁 Restore from pCloud backup using rclone
-        run: |
-          rclone copy pcloud:autovps.zip . || echo "❌ No backup found"
-          unzip -o autovps.zip || echo "❌ Failed to unzip"
+          echo "🔁 Checking for backup..."
+          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
+          unzip -o autovps.zip || echo "❌ Failed to unzip or not found"
 
-      - name: 🔐 Start tmate (SSH Access)
+      - name: 🔐 Start tmate SSH Session
         run: |
           sudo apt install -y tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH" > links/autovps.txt
+          echo "$SSH" > links/ssh.txt
           echo "✅ SSH Ready: $SSH"
 
-      - name: 📄 Commit SSH info to repo
+      - name: 💾 Save SSH link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH link"
           file_pattern: 'links/*.txt'
 
-      - name: 📤 Backup & upload VPS state using rclone
+      - name: 📤 Backup and Upload to Filebase
+        env:
+          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
+          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
+          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          rclone copy autovps.zip pcloud: || echo "❌ Upload failed"
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
 
-      - name: ⏳ Keep VPS Alive
+          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
+          rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
+
+      - name: ⏳ Keep VPS alive
         run: |
-          echo "⏳ Sleeping for 6 hours..."
+          echo "⏳ VPS will sleep for 6 hours..."
           sleep 21600
