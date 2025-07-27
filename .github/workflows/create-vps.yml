@@ -26,15 +26,14 @@ jobs:
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat <<EOF > rclone.conf
-[filebase]
-type = s3
-provider = Other
-env_auth = false
-access_key_id = $FILEBASE_ACCESS_KEY
-secret_access_key = $FILEBASE_SECRET_KEY
-endpoint = https://s3.filebase.com
-EOF
+          echo "[filebase]" > rclone.conf
+          echo "type = s3" >> rclone.conf
+          echo "provider = Other" >> rclone.conf
+          echo "env_auth = false" >> rclone.conf
+          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+
           echo "🔁 Checking for backup..."
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip or not found"
@@ -53,7 +52,7 @@ EOF
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/*.txt'
+          file_pattern: "links/*.txt"
 
       - name: 📤 Backup and Upload to Filebase
         env:
@@ -61,15 +60,14 @@ EOF
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat <<EOF > rclone.conf
-[filebase]
-type = s3
-provider = Other
-env_auth = false
-access_key_id = $FILEBASE_ACCESS_KEY
-secret_access_key = $FILEBASE_SECRET_KEY
-endpoint = https://s3.filebase.com
-EOF
+          echo "[filebase]" > rclone.conf
+          echo "type = s3" >> rclone.conf
+          echo "provider = Other" >> rclone.conf
+          echo "env_auth = false" >> rclone.conf
+          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+
           zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
           rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
 
