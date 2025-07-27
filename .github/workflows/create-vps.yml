@@ -26,30 +26,30 @@ jobs:
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat > rclone.conf <<-EOF
-          [filebase]
-          type = s3
-          provider = Other
-          env_auth = false
-          access_key_id = ${FILEBASE_ACCESS_KEY}
-          secret_access_key = ${FILEBASE_SECRET_KEY}
-          endpoint = https://s3.filebase.com
-          EOF
-
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
           echo "🔁 Checking for backup..."
-          rclone --config rclone.conf copy filebase:${FILEBASE_BUCKET}/autovps.zip . || echo "❌ No backup found"
+          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip or not found"
 
       - name: 🔐 Start tmate SSH Session
         run: |
-          sudo apt update && sudo apt install -y tmate
+          sudo apt install -y tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH" > links/ssh.txt
+          cat links/ssh.txt
           echo "✅ SSH Ready: $SSH"
 
-      - name: 💾 Save SSH link
+      - name: 💾 Save SSH link to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH link"
@@ -61,18 +61,17 @@ jobs:
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat > rclone.conf <<-EOF
-          [filebase]
-          type = s3
-          provider = Other
-          env_auth = false
-          access_key_id = ${FILEBASE_ACCESS_KEY}
-          secret_access_key = ${FILEBASE_SECRET_KEY}
-          endpoint = https://s3.filebase.com
-          EOF
-
-          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
-          rclone --config rclone.conf copy autovps.zip filebase:${FILEBASE_BUCKET} || echo "❌ Upload failed"
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
+          zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
+          rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
 
       - name: ⏳ Keep VPS alive
         run: |
