@@ -2,7 +2,7 @@ name: Auto VPS with Minecraft Server + Filebase Backup
 
 on:
   schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
       - name: ⬇️ Checkout Repo
         uses: actions/checkout@v3
 
-      - name: 📁 Create required folders
+      - name: 📁 Create Folders
         run: mkdir -p .backup links restore paper
 
       - name: 📥 Install rclone
@@ -35,12 +35,11 @@ access_key_id = $FILEBASE_ACCESS_KEY
 secret_access_key = $FILEBASE_SECRET_KEY
 endpoint = https://s3.filebase.com
 EOF
-
           echo "🔁 Checking for backup..."
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
-          unzip -o autovps.zip || echo "❌ Failed to unzip or not found"
+          unzip -o autovps.zip || echo "❌ Failed to unzip"
 
-      - name: 📥 Download Paper 1.20.1 (if not present)
+      - name: 📥 Download Paper 1.20.1
         run: |
           cd paper
           if [ ! -f paper.jar ]; then
@@ -55,22 +54,22 @@ EOF
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH" > links/ssh.txt
-          cat links/ssh.txt
           echo "✅ SSH Ready: $SSH"
+          cat links/ssh.txt
 
-      - name: 💾 Save SSH Link to Repo
+      - name: 💾 Commit SSH Link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH link"
           file_pattern: 'links/*.txt'
 
-      - name: 🚀 Start Minecraft Server (in background)
+      - name: 🚀 Start Minecraft Server
         run: |
           cd paper
           nohup java -Xms512M -Xmx1024M -jar paper.jar nogui > server.log 2>&1 &
           echo "✅ Minecraft server started in background"
 
-      - name: 📤 Backup Everything to Filebase
+      - name: 📤 Backup to Filebase
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
@@ -85,11 +84,10 @@ access_key_id = $FILEBASE_ACCESS_KEY
 secret_access_key = $FILEBASE_SECRET_KEY
 endpoint = https://s3.filebase.com
 EOF
-
           zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
           rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
 
-      - name: ⏳ Keep VPS Alive for 6 hours
+      - name: ⏳ Keep VPS Alive
         run: |
           echo "⏳ VPS will sleep for 6 hours..."
           sleep 21600
