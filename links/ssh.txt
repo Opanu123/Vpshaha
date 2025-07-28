@@ -1,1 +1,0 @@
-ssh A456UAuDRKGpRabqpB4uKeJZ5@nyc1.tmate.io
