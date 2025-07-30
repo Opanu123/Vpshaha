@@ -1,8 +1,8 @@
-name: Auto VPS with Minecraft Server + Filebase Backup
+name: Auto VPS with Filebase Backup
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */6 * * *"  # Every 6 hours
   workflow_dispatch:
 
 jobs:
@@ -14,38 +14,29 @@ jobs:
       - name: ⬇️ Checkout Repo
         uses: actions/checkout@v3
 
-      - name: 📁 Create Folders
-        run: mkdir -p .backup links restore paper
+      - name: 📁 Create required folders
+        run: mkdir -p .backup links restore
 
       - name: 📥 Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: 🔁 Restore from Filebase
+      - name: 🔁 Restore from Filebase (S3)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat <<EOF > rclone.conf
-[filebase]
-type = s3
-provider = Other
-env_auth = false
-access_key_id = $FILEBASE_ACCESS_KEY
-secret_access_key = $FILEBASE_SECRET_KEY
-endpoint = https://s3.filebase.com
-EOF
+          echo "[filebase]" > rclone.conf
+          echo "type = s3" >> rclone.conf
+          echo "provider = Other" >> rclone.conf
+          echo "env_auth = false" >> rclone.conf
+          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+
           echo "🔁 Checking for backup..."
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
-          unzip -o autovps.zip || echo "❌ Failed to unzip"
-
-      - name: 📥 Download Paper 1.20.1
-        run: |
-          cd paper
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-            echo "eula=true" > eula.txt
-          fi
+          unzip -o autovps.zip || echo "❌ Failed to unzip or not found"
 
       - name: 🔐 Start tmate SSH Session
         run: |
@@ -54,40 +45,33 @@ EOF
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH" > links/ssh.txt
-          echo "✅ SSH Ready: $SSH"
           cat links/ssh.txt
+          echo "✅ SSH Ready: $SSH"
 
-      - name: 💾 Commit SSH Link
+      - name: 💾 Save SSH link to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/*.txt'
+          file_pattern: "links/*.txt"
 
-      - name: 🚀 Start Minecraft Server
-        run: |
-          cd paper
-          nohup java -Xms512M -Xmx1024M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft server started in background"
-
-      - name: 📤 Backup to Filebase
+      - name: 📤 Backup and Upload to Filebase
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          cat <<EOF > rclone.conf
-[filebase]
-type = s3
-provider = Other
-env_auth = false
-access_key_id = $FILEBASE_ACCESS_KEY
-secret_access_key = $FILEBASE_SECRET_KEY
-endpoint = https://s3.filebase.com
-EOF
+          echo "[filebase]" > rclone.conf
+          echo "type = s3" >> rclone.conf
+          echo "provider = Other" >> rclone.conf
+          echo "env_auth = false" >> rclone.conf
+          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+
           zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
           rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
 
-      - name: ⏳ Keep VPS Alive
+      - name: ⏳ Keep VPS alive
         run: |
           echo "⏳ VPS will sleep for 6 hours..."
           sleep 21600
