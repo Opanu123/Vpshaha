@@ -40,9 +40,10 @@ EOF
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Failed to unzip or no backup found"
 
-      - name: 📥 Restore Playit agent secret
+      - name: 📥 Save Playit agent secret
         run: |
-          echo "${{ secrets.PLAYIT_AGENT_SECRET }}" > playit/.playit.toml
+          mkdir -p playit
+          echo "agent-secret = \"${{ secrets.PLAYIT_AGENT_SECRET }}\"" > playit/.playit.toml
 
       - name: 📥 Download Paper Minecraft server if missing
         run: |
@@ -66,7 +67,6 @@ EOF
           cd playit
           nohup ./playit tunnel --agent-secret="${{ secrets.PLAYIT_AGENT_SECRET }}" > playit.log 2>&1 &
           sleep 10
-          # Save the public IP URL from the log (change the grep if output differs)
           TUNNEL_URL=$(grep -o 'https://[a-z0-9\-]*\.playit\.cloud' playit.log | head -1)
           echo "$TUNNEL_URL" > ../links/playit_ip.txt
           echo "✅ Playit tunnel started: $TUNNEL_URL"
@@ -77,7 +77,7 @@ EOF
           nohup java -Xms512M -Xmx12G -jar paper.jar nogui > server.log 2>&1 &
           echo "✅ Minecraft server started"
 
-      - name: 💾 Auto backup every 30 mins (until 6 hour limit)
+      - name: 💾 Auto backup every 30 mins (for 6 hours)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
@@ -97,7 +97,7 @@ EOF
             echo "🔄 Backup cycle $i started..."
             zip -r autovps.zip . -x ".git/*" ".github/*" "links/*" || echo "❌ Nothing to zip"
             rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
-            sleep 1800  # 30 minutes
+            sleep 1800
           done
 
       - name: 💾 Commit SSH & Playit IP info
