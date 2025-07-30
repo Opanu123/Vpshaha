@@ -2,13 +2,13 @@ name: Auto VPS with Minecraft + Playit + Filebase Backup
 
 on:
   schedule:
-    - cron: "0 */6 * * *"  # Run every 6 hours
+    - cron: "0 */6 * * *"  # Every 6 hours
   workflow_dispatch:
 
 jobs:
   start-vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 370
+    timeout-minutes: 370  # 6 hours + buffer
 
     steps:
       - name: ⬇️ Checkout Repo
@@ -20,30 +20,32 @@ jobs:
       - name: 📥 Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: 🔁 Restore backup from Filebase
+      - name: 🔁 Restore backup from Filebase (S3)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          echo "[filebase]" > rclone.conf
-          echo "type = s3" >> rclone.conf
-          echo "provider = Other" >> rclone.conf
-          echo "env_auth = false" >> rclone.conf
-          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
 
           echo "🔁 Checking for backup..."
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
+          unzip -o autovps.zip || echo "❌ Failed to unzip or no backup found"
 
       - name: 📥 Save Playit agent secret
         run: |
           mkdir -p playit
-          echo 'agent-secret = "${{ secrets.PLAYIT_AGENT_SECRET }}"' > playit/.playit.toml
+          echo "agent-secret = \"${{ secrets.PLAYIT_AGENT_SECRET }}\"" > playit/.playit.toml
 
-      - name: 📥 Download PaperMC
+      - name: 📥 Download Paper Minecraft server if missing
         run: |
           cd paper
           if [ ! -f paper.jar ]; then
@@ -51,54 +53,58 @@ jobs:
             echo "eula=true" > eula.txt
           fi
 
-      - name: 🔐 Start tmate SSH
+      - name: 🔐 Install and start tmate SSH session
         run: |
           sudo apt update && sudo apt install -y tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH" > links/ssh.txt
-          echo "✅ SSH: $SSH"
+          echo "✅ SSH Ready: $SSH"
 
-      - name: 🚀 Start Playit tunnel
+      - name: 🚀 Start Playit tunnel in background
         run: |
           cd playit
-          curl -O https://playit-cloud.github.io/cli/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
           nohup ./playit tunnel --agent-secret="${{ secrets.PLAYIT_AGENT_SECRET }}" > playit.log 2>&1 &
-          sleep 10
-          grep -o 'https://[a-z0-9\-]*\.playit\.cloud' playit.log | head -1 > ../links/playit_ip.txt
+          sleep 15
+          TUNNEL_URL=$(grep -o 'https://[a-z0-9\-]*\.playit\.cloud' playit.log | head -1)
+          echo "$TUNNEL_URL" > ../links/playit_ip.txt
+          echo "✅ Playit tunnel started: $TUNNEL_URL"
 
-      - name: 🚀 Start Minecraft server
+      - name: 🚀 Start Minecraft server in background
         run: |
           cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
+          nohup java -Xms512M -Xmx12G -jar paper.jar nogui > server.log 2>&1 &
+          echo "✅ Minecraft server started"
 
-      - name: 💾 Auto backup every 30 mins
+      - name: 💾 Commit SSH & Playit IP info
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🔁 Updated SSH & Playit IP links"
+          file_pattern: 'links/*.txt'
+
+      - name: 💾 Auto backup every 30 mins (for 6 hours)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          echo "[filebase]" > rclone.conf
-          echo "type = s3" >> rclone.conf
-          echo "provider = Other" >> rclone.conf
-          echo "env_auth = false" >> rclone.conf
-          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+          cat <<EOF > rclone.conf
+[filebase]
+type = s3
+provider = Other
+env_auth = false
+access_key_id = $FILEBASE_ACCESS_KEY
+secret_access_key = $FILEBASE_SECRET_KEY
+endpoint = https://s3.filebase.com
+EOF
 
           for i in {1..12}; do
-            echo "🔄 Backup $i"
-            zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
-            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
+            echo "🔄 Backup cycle $i started..."
+            zip -r autovps.zip . -x ".git/*" ".github/*" || echo "❌ Nothing to zip"
+            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET || echo "❌ Upload failed"
             sleep 1800
           done
 
-      - name: ✅ Save SSH and Playit IP
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH and Playit IP"
-          file_pattern: 'links/*.txt'
+      - name: ⏳ VPS finished 6 hour session
+        run: echo "✅ VPS work done for this session."
