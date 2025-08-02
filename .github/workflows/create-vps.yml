@@ -1,4 +1,4 @@
-name: Auto VPS with Minecraft + Playit + Backup
+name: Auto VPS with Minecraft + tmate + Backup
 
 on:
   schedule:
@@ -6,21 +6,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  vps:
+  start-vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # 6 hours + buffer
+    timeout-minutes: 370  # 6 hours + some buffer
 
     steps:
-      - name: ⬇️ Checkout Repo
+      - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: 📁 Setup folders
-        run: mkdir -p links paper .playit
+      - name: Create required folders
+        run: mkdir -p links paper .backup
 
-      - name: 📥 Install rclone
+      - name: Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: 🔁 Restore backup from Filebase
+      - name: Restore backup from Filebase
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
@@ -34,10 +34,11 @@ jobs:
           echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
           echo "endpoint = https://s3.filebase.com" >> rclone.conf
 
-          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
+          echo "Checking for backup on Filebase..."
+          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "No backup found"
+          unzip -o autovps.zip || echo "No previous backup to restore"
 
-      - name: 📥 Download PaperMC
+      - name: Download PaperMC if missing
         run: |
           cd paper
           if [ ! -f paper.jar ]; then
@@ -45,368 +46,48 @@ jobs:
             echo "eula=true" > eula.txt
           fi
 
-      - name: ⚙️ Install Playit
+      - name: Install tmate
+        run: sudo apt-get update && sudo apt-get install -y tmate
+
+      - name: Start tmate SSH session and save link
         run: |
-          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
-          if [ -f ".playit/.playit.toml" ]; then
-            mv .playit/.playit.toml .
-          fi
-
-      - name: 🌐 Start Playit and get linking URL
-        run: |
-          ./playit > playit.log 2>&1 &
-          echo "Waiting up to 60 seconds for linking URL..."
-          for i in {1..30}; do
-            LINK=$(grep -oE 'https?://[a-zA-Z0-9./?=_-]+' playit.log | grep 'playit.gg' | head -n1)
-            if [ ! -z "$LINK" ]; then
-              echo "🔗 Playit Linking URL found: $LINK"
-              break
-            fi
-            sleep 2
-          done
-
-          if [ -z "$LINK" ]; then
-            echo "❌ Could not find linking URL in logs."
-            echo "Try running Playit agent locally to generate .playit.toml"
-            exit 1
-          fi
-
-          echo "Waiting for .playit.toml to be created after linking (up to 5 minutes)..."
-          timeout=300
-          elapsed=0
-          while [ ! -f .playit.toml ] && [ $elapsed -lt $timeout ]; do
-            sleep 2
-            elapsed=$((elapsed + 2))
-          done
-
-          if [ -f .playit.toml ]; then
-            echo "✅ .playit.toml created!"
-          else
-            echo "❌ .playit.toml not found after $timeout seconds."
-            exit 1
-          fi
-
-          mkdir -p .playit
-          cp .playit.toml .playit/.playit.toml
-
-      - name: 🔗 Extract SSH link
-        run: |
-          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH_LINK" > links/ssh.txt
-          echo "✅ SSH Link: $SSH_LINK"
+          echo "SSH link: $SSH_LINK"
 
-      - name: 🚀 Start Minecraft server
+      - name: Start Minecraft Server
         run: |
           cd paper
           nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
 
-      - name: 💾 Commit SSH Link
+      - name: Commit SSH link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/ssh.txt'
+          commit_message: "Updated SSH link"
+          file_pattern: "links/ssh.txt"
 
-      - name: 💾 Auto Backup every 30 mins
+      - name: Auto Backup every 30 minutes for 6 hours (12 times)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          for i in {1..12}; do
-            echo "[filebase]" > rclone.conf
-            echo "type = s3" >> rclone.conf
-            echo "provider = Other" >> rclone.conf
-            echo "env_auth = false" >> rclone.conf
-            echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-            echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-            echo "endpoint = https://s3.filebase.com" >> rclone.conf
+          echo "[filebase]" > rclone.conf
+          echo "type = s3" >> rclone.conf
+          echo "provider = Other" >> rclone.conf
+          echo "env_auth = false" >> rclone.conf
+          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+          echo "endpoint = https://s3.filebase.com" >> rclone.conf
 
-            mkdir -p .playit
-            cp .playit.toml .playit/.playit.toml
+          for i in {1..12}; do
+            echo "Backup iteration $i"
             zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
             rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
             sleep 1800
           done
 
-      - name: ✅ Done
-        run: echo "✅ VPS Session Ended"          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
-
-      - name: 📥 Download PaperMC
-        run: |
-          cd paper
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-            echo "eula=true" > eula.txt
-          fi
-
-      - name: ⚙️ Install Playit
-        run: |
-          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
-          if [ -f ".playit/.playit.toml" ]; then
-            mv .playit/.playit.toml .
-          fi
-
-      - name: 🌐 Start Playit and get linking URL
-        run: |
-          ./playit > playit.log 2>&1 &
-          echo "Waiting up to 60 seconds for linking URL..."
-          for i in {1..30}; do
-            LINK=$(grep -oE 'https?://[a-zA-Z0-9./?=_-]+' playit.log | grep 'playit.gg' | head -n1)
-            if [ ! -z "$LINK" ]; then
-              echo "🔗 Playit Linking URL found: $LINK"
-              break
-            fi
-            sleep 2
-          done
-
-          if [ -z "$LINK" ]; then
-            echo "❌ Could not find linking URL in logs."
-            echo "Try running Playit agent locally to generate .playit.toml"
-            exit 1
-          fi
-
-          echo "Waiting for .playit.toml to be created after linking (up to 5 minutes)..."
-          timeout=300
-          elapsed=0
-          while [ ! -f .playit.toml ] && [ $elapsed -lt $timeout ]; do
-            sleep 2
-            elapsed=$((elapsed + 2))
-          done
-
-          if [ -f .playit.toml ]; then
-            echo "✅ .playit.toml created!"
-          else
-            echo "❌ .playit.toml not found after $timeout seconds."
-            exit 1
-          fi
-
-          mkdir -p .playit
-          cp .playit.toml .playit/.playit.toml
-
-      - name: 🔗 Extract SSH link
-        run: |
-          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
-          echo "$SSH_LINK" > links/ssh.txt
-          echo "✅ SSH Link: $SSH_LINK"
-
-      - name: 🚀 Start Minecraft server
-        run: |
-          cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
-
-      - name: 💾 Commit SSH Link
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/ssh.txt'
-
-      - name: 💾 Auto Backup every 30 mins
-        env:
-          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
-          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
-          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-        run: |
-          for i in {1..12}; do
-            echo "[filebase]" > rclone.conf
-            echo "type = s3" >> rclone.conf
-            echo "provider = Other" >> rclone.conf
-            echo "env_auth = false" >> rclone.conf
-            echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-            echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-            echo "endpoint = https://s3.filebase.com" >> rclone.conf
-
-            mkdir -p .playit
-            cp .playit.toml .playit/.playit.toml
-            zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
-            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
-            sleep 1800
-          done
-
-      - name: ✅ Done
-        run: echo "✅ VPS Session Ended"          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
-
-      - name: 📥 Download PaperMC
-        run: |
-          cd paper
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-            echo "eula=true" > eula.txt
-          fi
-
-      - name: ⚙️ Install Playit
-        run: |
-          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
-          if [ -f ".playit/.playit.toml" ]; then
-            mv .playit/.playit.toml .
-          fi
-
-      - name: 🌐 Start Playit tunnel (SSH only)
-        run: |
-          ./playit &  # Start agent in background
-          echo "⏳ Waiting up to 5 minutes for Playit config..."
-          for i in {1..150}; do  # 150 × 2s = 5 minutes
-            if [ -f .playit.toml ]; then
-              echo "✅ Playit config found!"
-              break
-            fi
-            sleep 2
-          done
-
-          if [ ! -f .playit.toml ]; then
-            echo "❌ Playit config not found after 5 minutes."
-            exit 1
-          fi
-
-          mkdir -p .playit
-          cp .playit.toml .playit/.playit.toml
-
-      - name: 🔗 Extract SSH link
-        run: |
-          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
-          echo "$SSH_LINK" > links/ssh.txt
-          echo "✅ SSH Link: $SSH_LINK"
-
-      - name: 🚀 Start Minecraft server
-        run: |
-          cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
-
-      - name: 💾 Commit SSH Link
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/ssh.txt'
-
-      - name: 💾 Auto Backup every 30 mins
-        env:
-          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
-          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
-          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-        run: |
-          for i in {1..12}; do
-            echo "[filebase]" > rclone.conf
-            echo "type = s3" >> rclone.conf
-            echo "provider = Other" >> rclone.conf
-            echo "env_auth = false" >> rclone.conf
-            echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-            echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-            echo "endpoint = https://s3.filebase.com" >> rclone.conf
-
-            mkdir -p .playit
-            cp .playit.toml .playit/.playit.toml
-            zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
-            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
-            sleep 1800
-          done
-
-      - name: ✅ Done
-        run: echo "✅ VPS Session Ended"          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
-
-      - name: 📥 Download PaperMC
-        run: |
-          cd paper
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-            echo "eula=true" > eula.txt
-          fi
-
-      - name: ⚙️ Install Playit
-        run: |
-          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
-          if [ -f ".playit/.playit.toml" ]; then
-            mv .playit/.playit.toml .
-          fi
-
-      - name: 🌐 Start Playit and get linking URL
-        run: |
-          ./playit > playit.log 2>&1 &
-          echo "Waiting up to 60 seconds for linking URL..."
-          for i in {1..30}; do
-            LINK=$(grep -oE 'https?://[a-zA-Z0-9./?=_-]+' playit.log | grep 'playit.gg' | head -n1)
-            if [ ! -z "$LINK" ]; then
-              echo "🔗 Playit Linking URL found: $LINK"
-              break
-            fi
-            sleep 2
-          done
-
-          if [ -z "$LINK" ]; then
-            echo "❌ Could not find linking URL in logs."
-            echo "Try running Playit agent locally to generate .playit.toml"
-            exit 1
-          fi
-
-          echo "Waiting for .playit.toml to be created after linking..."
-          timeout=60
-          elapsed=0
-          while [ ! -f .playit.toml ] && [ $elapsed -lt $timeout ]; do
-            sleep 2
-            elapsed=$((elapsed + 2))
-          done
-
-          if [ -f .playit.toml ]; then
-            echo "✅ .playit.toml created!"
-          else
-            echo "❌ .playit.toml not found after $timeout seconds."
-            exit 1
-          fi
-
-          mkdir -p .playit
-          cp .playit.toml .playit/.playit.toml
-
-      - name: 🔗 Extract SSH link
-        run: |
-          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
-          echo "$SSH_LINK" > links/ssh.txt
-          echo "✅ SSH Link: $SSH_LINK"
-
-      - name: 🚀 Start Minecraft server
-        run: |
-          cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
-
-      - name: 💾 Commit SSH Link
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/ssh.txt'
-
-      - name: 💾 Auto Backup every 30 mins
-        env:
-          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
-          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
-          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-        run: |
-          for i in {1..12}; do
-            echo "[filebase]" > rclone.conf
-            echo "type = s3" >> rclone.conf
-            echo "provider = Other" >> rclone.conf
-            echo "env_auth = false" >> rclone.conf
-            echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-            echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-            echo "endpoint = https://s3.filebase.com" >> rclone.conf
-
-            mkdir -p .playit
-            cp .playit.toml .playit/.playit.toml
-            zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
-            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
-            sleep 1800
-          done
-
-      - name: ✅ Done
-        run: echo "✅ VPS Session Ended"
+      - name: Done
+        run: echo "VPS session ended."
