@@ -3,7 +3,7 @@ name: Minecraft Server with Filebase Backup
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
+    - cron: "0 */6 * * *"  # Runs every 6 hours
 
 jobs:
   minecraft:
@@ -11,17 +11,12 @@ jobs:
     timeout-minutes: 360
 
     steps:
-
-    - name: Checkout Repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install Dependencies
+    - name: Setup Environment
       run: |
-        sudo apt update
-        sudo apt install -y unzip wget default-jdk tmate screen curl zip
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install
+        sudo apt update && sudo apt install -y unzip wget default-jdk tmate screen
         mkdir -p server backups
 
     - name: Configure AWS for Filebase
@@ -33,8 +28,7 @@ jobs:
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com || \
-        aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com || aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
     - name: Restore Backup from Filebase
       run: |
@@ -54,7 +48,7 @@ jobs:
         cd server
         screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-    - name: Save tmate SSH and Wait
+    - name: Save tmate SSH and wait
       run: |
         mkdir -p links
         tmate -S /tmp/tmate.sock new-session -d
@@ -67,7 +61,7 @@ jobs:
         git add links/ssh.txt
         git commit -m "Update SSH link" || true
         git push origin main
-        tail -f /dev/null &
+        tail -f /dev/null
 
     - name: Auto Backup Every 30 Minutes
       run: |
