@@ -3,20 +3,25 @@ name: Minecraft Server with Filebase Backup
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # Runs every 6 hours
+    - cron: "0 */6 * * *"  # Every 6 hours
 
 jobs:
   minecraft:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
 
-    - name: Checkout
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Setup Environment
+    - name: Install Dependencies
       run: |
-        sudo apt update && sudo apt install -y unzip wget default-jdk awscli tmate screen
+        sudo apt update
+        sudo apt install -y unzip wget default-jdk tmate screen curl zip
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
         mkdir -p server backups
 
     - name: Configure AWS for Filebase
@@ -28,7 +33,8 @@ jobs:
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} || aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com || \
+        aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
     - name: Restore Backup from Filebase
       run: |
@@ -39,7 +45,7 @@ jobs:
 
     - name: Download Minecraft Paper Server
       run: |
-        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/api/download
+        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
         mv paper.jar server/paper.jar
         echo "eula=true" > server/eula.txt
 
@@ -48,7 +54,7 @@ jobs:
         cd server
         screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-    - name: Save tmate SSH and wait
+    - name: Save tmate SSH and Wait
       run: |
         mkdir -p links
         tmate -S /tmp/tmate.sock new-session -d
@@ -61,7 +67,7 @@ jobs:
         git add links/ssh.txt
         git commit -m "Update SSH link" || true
         git push origin main
-        tail -f /dev/null
+        tail -f /dev/null &
 
     - name: Auto Backup Every 30 Minutes
       run: |
