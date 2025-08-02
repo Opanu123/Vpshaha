@@ -3,7 +3,7 @@ name: Minecraft Server with Filebase Backup
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # Runs every 6 hours
+    - cron: "0 */6 * * *"  # Every 6 hours
 
 jobs:
   minecraft:
@@ -11,15 +11,16 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Checkout
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Setup Environment
+    - name: Install Packages
       run: |
-        sudo apt update && sudo apt install -y unzip wget default-jdk tmate screen
+        sudo apt update
+        sudo apt install -y unzip wget default-jdk tmate screen zip
         mkdir -p server backups
 
-    - name: Configure AWS for Filebase
+    - name: Configure AWS Credentials for Filebase
       run: |
         mkdir -p ~/.aws
         echo "[default]" > ~/.aws/credentials
@@ -37,7 +38,7 @@ jobs:
           unzip mcbackup.zip -d server
         fi
 
-    - name: Download Minecraft Paper Server
+    - name: Download Paper Minecraft Server
       run: |
         wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
         mv paper.jar server/paper.jar
@@ -48,12 +49,14 @@ jobs:
         cd server
         screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-    - name: Save tmate SSH and wait
+    - name: Save tmate SSH and wait (debug)
       run: |
+        set -x
         mkdir -p links
         tmate -S /tmp/tmate.sock new-session -d
         tmate -S /tmp/tmate.sock wait tmate-ready
         TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+        echo "TMATE SSH LINK: $TMATE_SSH"
         echo "$TMATE_SSH" > links/ssh.txt
         git config --global user.name "auto"
         git config --global user.email "auto@example.com"
@@ -61,76 +64,16 @@ jobs:
         git add links/ssh.txt
         git commit -m "Update SSH link" || true
         git push origin main
+        echo "Starting tail to keep session alive..."
         tail -f /dev/null
 
     - name: Auto Backup Every 30 Minutes
       run: |
         while true; do
-          sleep 1800
+          echo "Zipping server directory..."
           zip -r mcbackup.zip server
+          echo "Uploading to Filebase..."
           aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
-        done        mv paper.jar server/paper.jar
-        echo "eula=true" > server/eula.txt
-
-    - name: Start Minecraft Server in Screen
-      run: |
-        cd server
-        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
-
-    - name: Save tmate SSH and wait
-      run: |
-        mkdir -p links
-        tmate -S /tmp/tmate.sock new-session -d
-        tmate -S /tmp/tmate.sock wait tmate-ready
-        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-        echo "$TMATE_SSH" > links/ssh.txt
-        git config --global user.name "auto"
-        git config --global user.email "auto@example.com"
-        git pull origin main
-        git add links/ssh.txt
-        git commit -m "Update SSH link" || true
-        git push origin main
-        tail -f /dev/null
-
-    - name: Auto Backup Every 30 Minutes
-      run: |
-        while true; do
+          echo "Backup complete. Waiting 30 minutes..."
           sleep 1800
-          zip -r mcbackup.zip server
-          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
-        done          unzip mcbackup.zip -d server
-        fi
-
-    - name: Download Minecraft Paper Server
-      run: |
-        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-        mv paper.jar server/paper.jar
-        echo "eula=true" > server/eula.txt
-
-    - name: Start Minecraft Server in Screen
-      run: |
-        cd server
-        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
-
-    - name: Save tmate SSH and wait
-      run: |
-        mkdir -p links
-        tmate -S /tmp/tmate.sock new-session -d
-        tmate -S /tmp/tmate.sock wait tmate-ready
-        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-        echo "$TMATE_SSH" > links/ssh.txt
-        git config --global user.name "auto"
-        git config --global user.email "auto@example.com"
-        git pull origin main
-        git add links/ssh.txt
-        git commit -m "Update SSH link" || true
-        git push origin main
-        tail -f /dev/null
-
-    - name: Auto Backup Every 30 Minutes
-      run: |
-        while true; do
-          sleep 1800
-          zip -r mcbackup.zip server
-          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
         done
