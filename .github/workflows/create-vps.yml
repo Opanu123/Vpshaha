@@ -28,13 +28,49 @@ jobs:
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com || aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
+        # Only list, do not try to create
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
     - name: Restore Backup from Filebase
       run: |
         aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
         if [ -f mcbackup.zip ]; then
           unzip mcbackup.zip -d server
+        fi
+
+    - name: Download Minecraft Paper Server
+      run: |
+        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
+        mv paper.jar server/paper.jar
+        echo "eula=true" > server/eula.txt
+
+    - name: Start Minecraft Server in Screen
+      run: |
+        cd server
+        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
+
+    - name: Save tmate SSH and wait
+      run: |
+        mkdir -p links
+        tmate -S /tmp/tmate.sock new-session -d
+        tmate -S /tmp/tmate.sock wait tmate-ready
+        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+        echo "$TMATE_SSH" > links/ssh.txt
+        git config --global user.name "auto"
+        git config --global user.email "auto@example.com"
+        git pull origin main
+        git add links/ssh.txt
+        git commit -m "Update SSH link" || true
+        git push origin main
+        tail -f /dev/null
+
+    - name: Auto Backup Every 30 Minutes
+      run: |
+        while true; do
+          sleep 1800
+          zip -r mcbackup.zip server
+          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
+        done          unzip mcbackup.zip -d server
         fi
 
     - name: Download Minecraft Paper Server
