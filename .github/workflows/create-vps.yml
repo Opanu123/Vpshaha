@@ -58,13 +58,11 @@ jobs:
       - name: 🚀 Start Minecraft server
         run: |
           cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
+          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 & 
           echo "✅ Minecraft Started"
 
       - name: 🕵️‍♂️ Debug links folder
-        run: |
-          echo "---- SSH Link ----"
-          cat links/ssh.txt
+        run: cat links/ssh.txt
 
       - name: 💾 Save SSH Link to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -72,7 +70,7 @@ jobs:
           commit_message: "🔁 Updated SSH link"
           file_pattern: 'links/ssh.txt'
 
-      - name: 💾 Auto backup every 30 mins
+      - name: 💾 Auto backup every 30 mins for 6 hours (12x)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
