@@ -1,4 +1,4 @@
-name: Auto VPS with Minecraft + Playit + Filebase Backup
+name: Auto VPS with Minecraft + Filebase Backup
 
 on:
   schedule:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: 📁 Create folders
-        run: mkdir -p links .backup paper playit
+        run: mkdir -p links .backup paper
 
       - name: 📥 Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
@@ -38,11 +38,6 @@ jobs:
           rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
           unzip -o autovps.zip || echo "❌ Unzip failed"
 
-      - name: 📥 Save Playit agent secret
-        run: |
-          mkdir -p playit
-          echo 'agent-secret = "${{ secrets.PLAYIT_AGENT_SECRET }}"' > playit/.playit.toml
-
       - name: 📥 Download PaperMC
         run: |
           cd paper
@@ -60,16 +55,6 @@ jobs:
           echo "$SSH" > links/ssh.txt
           echo "✅ SSH: $SSH"
 
-      - name: 🚀 Start Playit tunnel
-        run: |
-          cd playit
-          curl -O https://playit-cloud.github.io/cli/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          mv playit-linux-amd64 playit
-          nohup ./playit tunnel --agent-secret="${{ secrets.PLAYIT_AGENT_SECRET }}" > playit.log 2>&1 &
-          sleep 10
-          grep -o 'https://[a-z0-9\-]*\.playit\.cloud' playit.log | head -1 > ../links/playit_ip.txt
-
       - name: 🚀 Start Minecraft server
         run: |
           cd paper
@@ -78,18 +63,14 @@ jobs:
 
       - name: 🕵️‍♂️ Debug links folder
         run: |
-          echo "---- Links folder contents ----"
-          ls -la links
-          echo "---- ssh.txt content ----"
+          echo "---- SSH Link ----"
           cat links/ssh.txt
-          echo "---- playit_ip.txt content ----"
-          cat links/playit_ip.txt
 
-      - name: 💾 Save SSH and Playit IP
+      - name: 💾 Save SSH Link to GitHub
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔁 Updated SSH and Playit IP"
-          file_pattern: 'links/*.txt'
+          commit_message: "🔁 Updated SSH link"
+          file_pattern: 'links/ssh.txt'
 
       - name: 💾 Auto backup every 30 mins
         env:
@@ -112,5 +93,5 @@ jobs:
             sleep 1800
           done
 
-      - name: ⏳ VPS finished 6 hour session
-        run: echo "✅ VPS work done for this session."
+      - name: ✅ Done
+        run: echo "✅ VPS session finished."
