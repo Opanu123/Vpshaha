@@ -1,4 +1,4 @@
-name: Auto VPS with Minecraft + Playit + Backup
+name: Auto VPS with Minecraft + Playit + Filebase Backup
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  vps:
+  start-vps:
     runs-on: ubuntu-latest
     timeout-minutes: 370  # 6 hours + buffer
 
@@ -14,7 +14,7 @@ jobs:
       - name: ⬇️ Checkout Repo
         uses: actions/checkout@v3
 
-      - name: 📁 Setup folders
+      - name: 📁 Create folders
         run: mkdir -p links paper .playit
 
       - name: 📥 Install rclone
@@ -34,8 +34,23 @@ jobs:
           echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
           echo "endpoint = https://s3.filebase.com" >> rclone.conf
 
-          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
-          unzip -o autovps.zip || echo "❌ Unzip failed"
+          echo "🔁 Checking for backup..."
+          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
+
+          if [ -f autovps.zip ]; then
+            echo "🔄 Backup found, unzipping..."
+            unzip -o autovps.zip || echo "❌ Unzip failed"
+          else
+            echo "⚠️ No backup zip found, skipping unzip."
+          fi
+
+      - name: 🔁 Restore Playit config
+        run: |
+          if [ -f links/playit.toml ]; then
+            mkdir -p ~/.config
+            cp links/playit.toml ~/.playit.toml
+            echo "✅ Restored Playit config"
+          fi
 
       - name: 📥 Download PaperMC
         run: |
@@ -45,42 +60,44 @@ jobs:
             echo "eula=true" > eula.txt
           fi
 
-      - name: ⚙️ Install Playit
+      - name: 🚀 Start Minecraft Server
+        run: |
+          cd paper
+          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
+          echo "✅ Minecraft started"
+
+      - name: ⚙️ Install and Start Playit Agent
         run: |
           wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
           chmod +x playit-linux-amd64
           mv playit-linux-amd64 playit
-          if [ -f ".playit/.playit.toml" ]; then
-            mv .playit/.playit.toml .
+
+          nohup ./playit > playit.log 2>&1 &
+          echo "⏳ Waiting for Playit agent to start..."
+          sleep 25
+
+          if [ -f ~/.playit.toml ]; then
+            mkdir -p .playit
+            cp ~/.playit.toml .playit/playit.toml
+            cp ~/.playit.toml links/playit.toml
+            echo "✅ Saved Playit config for next run"
+          else
+            echo "❌ Playit config not found yet — link your agent in Playit dashboard!"
           fi
 
-      - name: 🌐 Start Playit tunnel (SSH only)
+      - name: 🔗 Extract SSH Link
         run: |
-          ./playit & sleep 10
-          echo "Waiting for playit config..."
-          while [ ! -f .playit.toml ]; do sleep 2; done
-          mkdir -p .playit
-          cp .playit.toml .playit/.playit.toml
-
-      - name: 🔗 Extract SSH link
-        run: |
-          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
+          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' links/playit.toml | head -n1)
           echo "$SSH_LINK" > links/ssh.txt
           echo "✅ SSH Link: $SSH_LINK"
 
-      - name: 🚀 Start Minecraft server
-        run: |
-          cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-          echo "✅ Minecraft Started"
-
-      - name: 💾 Commit SSH Link
+      - name: 💾 Commit Playit config and SSH link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔁 Updated SSH link"
-          file_pattern: 'links/ssh.txt'
+          commit_message: "🔁 Updated Playit config & SSH link"
+          file_pattern: 'links/playit.toml,links/ssh.txt'
 
-      - name: 💾 Auto Backup every 30 mins
+      - name: 💾 Auto backup every 30 minutes (12 times for 6 hours)
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
@@ -95,12 +112,10 @@ jobs:
             echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
             echo "endpoint = https://s3.filebase.com" >> rclone.conf
 
-            mkdir -p .playit
-            cp .playit.toml .playit/.playit.toml
             zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
             rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
             sleep 1800
           done
 
       - name: ✅ Done
-        run: echo "✅ VPS Session Ended"
+        run: echo "✅ VPS session finished"
