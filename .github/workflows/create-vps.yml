@@ -1,93 +1,72 @@
-name: Auto VPS with Minecraft + tmate + Backup
+name: Minecraft Server with Filebase Backup
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"  # Runs every 6 hours
 
 jobs:
-  start-vps:
+  minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # 6 hours + some buffer
-
+    timeout-minutes: 360
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
 
-      - name: Create required folders
-        run: mkdir -p links paper .backup
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Install rclone
-        run: curl https://rclone.org/install.sh | sudo bash
+    - name: Setup Environment
+      run: |
+        sudo apt update && sudo apt install -y unzip wget default-jdk awscli tmate screen
+        mkdir -p server backups
 
-      - name: Restore backup from Filebase
-        env:
-          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
-          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
-          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-        run: |
-          echo "[filebase]" > rclone.conf
-          echo "type = s3" >> rclone.conf
-          echo "provider = Other" >> rclone.conf
-          echo "env_auth = false" >> rclone.conf
-          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-          echo "endpoint = https://s3.filebase.com" >> rclone.conf
+    - name: Configure AWS for Filebase
+      run: |
+        mkdir -p ~/.aws
+        echo "[default]" > ~/.aws/credentials
+        echo "aws_access_key_id = ${{ secrets.FILEBASE_KEY }}" >> ~/.aws/credentials
+        echo "aws_secret_access_key = ${{ secrets.FILEBASE_SECRET }}" >> ~/.aws/credentials
+        echo "[default]" > ~/.aws/config
+        echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
+        echo "output = json" >> ~/.aws/config
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} || aws s3 mb s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
-          echo "Checking for backup on Filebase..."
-          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "No backup found"
-          unzip -o autovps.zip || echo "No previous backup to restore"
+    - name: Restore Backup from Filebase
+      run: |
+        aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
+        if [ -f mcbackup.zip ]; then
+          unzip mcbackup.zip -d server
+        fi
 
-      - name: Download PaperMC if missing
-        run: |
-          cd paper
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-            echo "eula=true" > eula.txt
-          fi
+    - name: Download Minecraft Paper Server
+      run: |
+        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/api/download
+        mv paper.jar server/paper.jar
+        echo "eula=true" > server/eula.txt
 
-      - name: Install tmate
-        run: sudo apt-get update && sudo apt-get install -y tmate
+    - name: Start Minecraft Server in Screen
+      run: |
+        cd server
+        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-      - name: Start tmate SSH session and save link
-        run: |
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH_LINK" > links/ssh.txt
-          echo "SSH link: $SSH_LINK"
+    - name: Save tmate SSH and wait
+      run: |
+        mkdir -p links
+        tmate -S /tmp/tmate.sock new-session -d
+        tmate -S /tmp/tmate.sock wait tmate-ready
+        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+        echo "$TMATE_SSH" > links/ssh.txt
+        git config --global user.name "auto"
+        git config --global user.email "auto@example.com"
+        git pull origin main
+        git add links/ssh.txt
+        git commit -m "Update SSH link" || true
+        git push origin main
+        tail -f /dev/null
 
-      - name: Start Minecraft Server
-        run: |
-          cd paper
-          nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
-
-      - name: Commit SSH link
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Updated SSH link"
-          file_pattern: "links/ssh.txt"
-
-      - name: Auto Backup every 30 minutes for 6 hours (12 times)
-        env:
-          FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
-          FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
-          FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-        run: |
-          echo "[filebase]" > rclone.conf
-          echo "type = s3" >> rclone.conf
-          echo "provider = Other" >> rclone.conf
-          echo "env_auth = false" >> rclone.conf
-          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-          echo "endpoint = https://s3.filebase.com" >> rclone.conf
-
-          for i in {1..12}; do
-            echo "Backup iteration $i"
-            zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
-            rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
-            sleep 1800
-          done
-
-      - name: Done
-        run: echo "VPS session ended."
+    - name: Auto Backup Every 30 Minutes
+      run: |
+        while true; do
+          sleep 1800
+          zip -r mcbackup.zip server
+          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
+        done
