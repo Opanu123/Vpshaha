@@ -1,21 +1,21 @@
-name: Auto VPS with Minecraft + Filebase + ngrok
+name: Auto VPS with Minecraft + Playit + Backup
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */6 * * *"  # Every 6 hours
   workflow_dispatch:
 
 jobs:
-  start-vps:
+  vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 370
+    timeout-minutes: 370  # 6 hours + buffer
 
     steps:
       - name: ⬇️ Checkout Repo
         uses: actions/checkout@v3
 
-      - name: 📁 Create folders
-        run: mkdir -p links .backup paper
+      - name: 📁 Setup folders
+        run: mkdir -p links paper .playit
 
       - name: 📥 Install rclone
         run: curl https://rclone.org/install.sh | sudo bash
@@ -34,7 +34,7 @@ jobs:
           echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
           echo "endpoint = https://s3.filebase.com" >> rclone.conf
 
-          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup found"
+          rclone --config rclone.conf copy filebase:$FILEBASE_BUCKET/autovps.zip . || echo "❌ No backup"
           unzip -o autovps.zip || echo "❌ Unzip failed"
 
       - name: 📥 Download PaperMC
@@ -45,62 +45,62 @@ jobs:
             echo "eula=true" > eula.txt
           fi
 
-      - name: 🔐 Setup SSH & ngrok
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: ⚙️ Install Playit
         run: |
-          sudo apt update
-          sudo apt install -y openssh-server curl unzip
-          mkdir -p ~/.ssh
-          echo "PermitRootLogin yes" | sudo tee -a /etc/ssh/sshd_config
-          echo "PasswordAuthentication yes" | sudo tee -a /etc/ssh/sshd_config
-          echo "root:github" | sudo chpasswd
-          sudo service ssh restart
+          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
+          chmod +x playit-linux-amd64
+          mv playit-linux-amd64 playit
+          if [ -f ".playit/.playit.toml" ]; then
+            mv .playit/.playit.toml .
+          fi
 
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt update && sudo apt install ngrok
+      - name: 🌐 Start Playit tunnel (SSH only)
+        run: |
+          ./playit & sleep 10
+          echo "Waiting for playit config..."
+          while [ ! -f .playit.toml ]; do sleep 2; done
+          mkdir -p .playit
+          cp .playit.toml .playit/.playit.toml
 
-          ngrok config add-authtoken $NGROK_AUTH_TOKEN
-          nohup ngrok tcp 22 --region=ap > ngrok.log &
-          sleep 5
-          grep "tcp://" ngrok.log | tee links/ssh.txt
+      - name: 🔗 Extract SSH link
+        run: |
+          SSH_LINK=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml | head -n1)
+          echo "$SSH_LINK" > links/ssh.txt
+          echo "✅ SSH Link: $SSH_LINK"
 
-      - name: 🚀 Start Minecraft Server
+      - name: 🚀 Start Minecraft server
         run: |
           cd paper
           nohup java -Xmx12G -Xms512M -jar paper.jar nogui > server.log 2>&1 &
           echo "✅ Minecraft Started"
 
-      - name: 🕵️‍♂️ Debug SSH Link
-        run: cat links/ssh.txt
-
-      - name: 💾 Save SSH Link to GitHub
+      - name: 💾 Commit SSH Link
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔁 Updated SSH link (ngrok)"
+          commit_message: "🔁 Updated SSH link"
           file_pattern: 'links/ssh.txt'
 
-      - name: 💾 Auto backup every 30 mins for 6 hours (12x)
+      - name: 💾 Auto Backup every 30 mins
         env:
           FILEBASE_ACCESS_KEY: ${{ secrets.FILEBASE_ACCESS_KEY }}
           FILEBASE_SECRET_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
           FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
         run: |
-          echo "[filebase]" > rclone.conf
-          echo "type = s3" >> rclone.conf
-          echo "provider = Other" >> rclone.conf
-          echo "env_auth = false" >> rclone.conf
-          echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
-          echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
-          echo "endpoint = https://s3.filebase.com" >> rclone.conf
-
           for i in {1..12}; do
-            echo "🔄 Backup $i"
+            echo "[filebase]" > rclone.conf
+            echo "type = s3" >> rclone.conf
+            echo "provider = Other" >> rclone.conf
+            echo "env_auth = false" >> rclone.conf
+            echo "access_key_id = $FILEBASE_ACCESS_KEY" >> rclone.conf
+            echo "secret_access_key = $FILEBASE_SECRET_KEY" >> rclone.conf
+            echo "endpoint = https://s3.filebase.com" >> rclone.conf
+
+            mkdir -p .playit
+            cp .playit.toml .playit/.playit.toml
             zip -r autovps.zip . -x ".git/*" ".github/*" "links/*"
             rclone --config rclone.conf copy autovps.zip filebase:$FILEBASE_BUCKET
             sleep 1800
           done
 
       - name: ✅ Done
-        run: echo "✅ Session complete."
+        run: echo "✅ VPS Session Ended"
