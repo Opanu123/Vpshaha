@@ -1,40 +1,33 @@
-name: Minecraft Server with Filebase Backup
+name: 🔍 Filebase S3 Access Test
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"  # Runs every 6 hours
 
 jobs:
-  minecraft:
+  test-filebase:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Setup Environment
+    - name: Install AWS CLI
       run: |
-        sudo apt update && sudo apt install -y unzip wget default-jdk tmate screen
-        mkdir -p server backups
+        sudo apt update
+        sudo apt install -y awscli
 
-    - name: Configure AWS for Filebase
+    - name: Configure AWS Credentials for Filebase
       run: |
         mkdir -p ~/.aws
         echo "[default]" > ~/.aws/credentials
         echo "aws_access_key_id = ${{ secrets.FILEBASE_KEY }}" >> ~/.aws/credentials
         echo "aws_secret_access_key = ${{ secrets.FILEBASE_SECRET }}" >> ~/.aws/credentials
+
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
-        # Only list, do not try to create
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
-    - name: Restore Backup from Filebase
+    - name: Try to List Your Filebase Bucket
       run: |
-        aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
-        if [ -f mcbackup.zip ]; then
+        echo "Trying to list the contents of your bucket..."
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com        if [ -f mcbackup.zip ]; then
           unzip mcbackup.zip -d server
         fi
 
