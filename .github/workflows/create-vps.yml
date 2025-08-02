@@ -1,33 +1,39 @@
-name: 🔍 Filebase S3 Access Test
+name: Minecraft Server with Filebase Backup
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"  # Runs every 6 hours
 
 jobs:
-  test-filebase:
+  minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
-    - name: Install AWS CLI
-      run: |
-        sudo apt update
-        sudo apt install -y awscli
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - name: Configure AWS Credentials for Filebase
+    - name: Setup Environment
+      run: |
+        sudo apt update && sudo apt install -y unzip wget default-jdk tmate screen
+        mkdir -p server backups
+
+    - name: Configure AWS for Filebase
       run: |
         mkdir -p ~/.aws
         echo "[default]" > ~/.aws/credentials
-        echo "aws_access_key_id = ${{ secrets.FILEBASE_KEY }}" >> ~/.aws/credentials
-        echo "aws_secret_access_key = ${{ secrets.FILEBASE_SECRET }}" >> ~/.aws/credentials
-
+        echo "aws_access_key_id = ${{ secrets.FILEBASE_ACCESS_KEY }}" >> ~/.aws/credentials
+        echo "aws_secret_access_key = ${{ secrets.FILEBASE_SECRET_KEY }}" >> ~/.aws/credentials
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
+        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
-    - name: Try to List Your Filebase Bucket
+    - name: Restore Backup from Filebase
       run: |
-        echo "Trying to list the contents of your bucket..."
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com        if [ -f mcbackup.zip ]; then
+        aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
+        if [ -f mcbackup.zip ]; then
           unzip mcbackup.zip -d server
         fi
 
@@ -35,6 +41,35 @@ jobs:
       run: |
         wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
         mv paper.jar server/paper.jar
+        echo "eula=true" > server/eula.txt
+
+    - name: Start Minecraft Server in Screen
+      run: |
+        cd server
+        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
+
+    - name: Save tmate SSH and wait
+      run: |
+        mkdir -p links
+        tmate -S /tmp/tmate.sock new-session -d
+        tmate -S /tmp/tmate.sock wait tmate-ready
+        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+        echo "$TMATE_SSH" > links/ssh.txt
+        git config --global user.name "auto"
+        git config --global user.email "auto@example.com"
+        git pull origin main
+        git add links/ssh.txt
+        git commit -m "Update SSH link" || true
+        git push origin main
+        tail -f /dev/null
+
+    - name: Auto Backup Every 30 Minutes
+      run: |
+        while true; do
+          sleep 1800
+          zip -r mcbackup.zip server
+          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
+        done        mv paper.jar server/paper.jar
         echo "eula=true" > server/eula.txt
 
     - name: Start Minecraft Server in Screen
