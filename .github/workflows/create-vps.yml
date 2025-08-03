@@ -74,6 +74,46 @@ jobs:
 
           echo "[Sleep] Waiting 30 minutes..."
           sleep 1800
+        done          unzip mcbackup.zip -d server
+        fi
+
+    - name: Download Paper Server
+      run: |
+        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
+        mv paper.jar server/paper.jar
+        echo "eula=true" > server/eula.txt
+
+    - name: Start Minecraft Server
+      run: |
+        cd server
+        screen -dmS mc java -Xmx2G -jar paper.jar nogui
+
+    - name: Start Backup + SSH Rotate Loop
+      run: |
+        git config --global user.name "Auto Updater"
+        git config --global user.email "auto@example.com"
+
+        while true; do
+          echo "[Backup] Zipping server..."
+          zip -r mcbackup.zip server
+
+          echo "[Backup] Uploading to Filebase..."
+          rclone --config=rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
+
+          echo "[SSH] Starting new tmate session..."
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+          echo "$SSH_LINK" | tee links/ssh.txt
+
+          echo "[Git] Updating ssh.txt in repo..."
+          git pull origin main
+          git add links/ssh.txt
+          git commit -m "Auto update SSH link" || true
+          git push origin main
+
+          echo "[Sleep] Waiting 30 minutes..."
+          sleep 1800
         done
     - name: Restore Backup from Filebase
       run: |
