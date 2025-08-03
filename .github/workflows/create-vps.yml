@@ -1,4 +1,4 @@
-name: Minecraft Server with Filebase Backup
+name: Minecraft Server with Playit + Filebase
 
 on:
   workflow_dispatch:
@@ -8,19 +8,22 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 360
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install Packages
+    - name: Install Requirements
       run: |
         sudo apt update
-        sudo apt install -y unzip wget default-jdk tmate screen zip awscli
+        sudo apt install -y unzip wget default-jdk zip
+
+    - name: Setup Folders
+      run: |
         mkdir -p server backups
 
-    - name: Configure AWS Credentials for Filebase
+    - name: Configure AWS for Filebase
       run: |
         mkdir -p ~/.aws
         echo "[default]" > ~/.aws/credentials
@@ -29,47 +32,66 @@ jobs:
         echo "[default]" > ~/.aws/config
         echo "region = ${{ secrets.FILEBASE_REGION }}" >> ~/.aws/config
         echo "output = json" >> ~/.aws/config
-        aws s3 ls s3://${{ secrets.FILEBASE_BUCKET }} --endpoint-url=https://s3.filebase.com
 
-    - name: Restore Backup from Filebase
+    - name: Restore Minecraft Backup
       run: |
         aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
         if [ -f mcbackup.zip ]; then
           unzip mcbackup.zip -d server
         fi
 
-    - name: Download Paper Minecraft Server
+    - name: Restore .playit.toml (if exists)
+      run: |
+        aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/playit.toml .playit.toml --endpoint-url=https://s3.filebase.com || true
+
+    - name: Download & Run Playit Agent
+      run: |
+        wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-agent-linux-amd64 -O playit
+        chmod +x playit
+        ./playit &
+
+        echo "Waiting up to 5 minutes for .playit.toml to appear..."
+        for i in {1..30}; do
+          if [ -f .playit.toml ]; then
+            echo "Found playit.toml!"
+            break
+          fi
+          sleep 10
+        done
+
+    - name: Save Playit SSH Link
+      run: |
+        mkdir -p links
+        SSH_LINE=$(grep -oE 'ssh:\/\/[^ ]+' .playit.toml || echo "Link not found yet")
+        echo "$SSH_LINE" > links/ssh.txt
+
+    - name: Commit SSH Link
+      run: |
+        git config --global user.name "Auto"
+        git config --global user.email "auto@example.com"
+        git pull origin main
+        git add links/ssh.txt
+        git commit -m "Update SSH link" || true
+        git push origin main
+
+    - name: Start Minecraft Server
       run: |
         wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
         mv paper.jar server/paper.jar
         echo "eula=true" > server/eula.txt
-
-    - name: Start Minecraft Server in Screen
-      run: |
         cd server
-        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
+        nohup java -Xmx2G -jar paper.jar nogui &
 
-    - name: Start tmate and Save SSH Link
-      run: |
-        mkdir -p links
-        tmate -S /tmp/tmate.sock new-session -d
-        timeout 60 bash -c "until tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' &>/dev/null; do sleep 2; done"
-        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-        echo "$TMATE_SSH" | tee links/ssh.txt
-        git config --global user.name "auto"
-        git config --global user.email "auto@example.com"
-        git pull origin main || true
-        git add links/ssh.txt
-        git commit -m "Update SSH link" || true
-        git push origin main || true
-
-    - name: Backup Every 30 Minutes
+    - name: Auto Backup Every 30 Minutes
       run: |
         while true; do
-          echo "Zipping server directory..."
-          zip -r -q mcbackup.zip server
-          echo "Uploading to Filebase..."
+          echo "Zipping world..."
+          zip -r mcbackup.zip server
           aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
-          echo "Backup done. Sleeping 30 minutes..."
+
+          echo "Backing up .playit.toml..."
+          aws s3 cp .playit.toml s3://${{ secrets.FILEBASE_BUCKET }}/playit.toml --endpoint-url=https://s3.filebase.com
+
+          echo "Sleeping 30 minutes..."
           sleep 1800
         done
