@@ -1,9 +1,9 @@
-name: Minecraft with Playit + Filebase
+name: Minecraft with Rclone Backup & Reconnectable Tmate
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */6 * * *"  # Every 6 hours
 
 jobs:
   minecraft:
@@ -11,66 +11,76 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Checkout
+    - name: Checkout Repo
       uses: actions/checkout@v4
 
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y unzip wget default-jdk zip screen
+        sudo apt install -y unzip wget default-jdk tmate screen zip
+        mkdir -p server backups links
 
-    - name: Setup Directories
-      run: mkdir -p server backups links
-
-    - name: Download Minecraft Server
+    - name: Install Rclone
       run: |
-        wget -O server/paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-        echo "eula=true" > server/eula.txt
+        curl https://rclone.org/install.sh | sudo bash
+
+    - name: Configure Rclone for Filebase
+      run: |
+        mkdir -p ~/.config/rclone
+        echo "[filebase]" > ~/.config/rclone/rclone.conf
+        echo "type = s3" >> ~/.config/rclone/rclone.conf
+        echo "provider = Other" >> ~/.config/rclone/rclone.conf
+        echo "access_key_id = ${{ secrets.FILEBASE_ACCESS_KEY }}" >> ~/.config/rclone/rclone.conf
+        echo "secret_access_key = ${{ secrets.FILEBASE_SECRET_KEY }}" >> ~/.config/rclone/rclone.conf
+        echo "endpoint = https://s3.filebase.com" >> ~/.config/rclone/rclone.conf
+        echo "region = us-east-1" >> ~/.config/rclone/rclone.conf
 
     - name: Restore Backup from Filebase
       run: |
-        mkdir -p ~/.aws
-        echo "[default]" > ~/.aws/credentials
-        echo "aws_access_key_id = ${{ secrets.FILEBASE_ACCESS_KEY }}" >> ~/.aws/credentials
-        echo "aws_secret_access_key = ${{ secrets.FILEBASE_SECRET_KEY }}" >> ~/.aws/credentials
-        echo "[default]" > ~/.aws/config
-        echo "region = auto" >> ~/.aws/config
-        echo "output = json" >> ~/.aws/config
-        aws s3 cp s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip --endpoint-url=https://s3.filebase.com || true
-        unzip -o mcbackup.zip -d server || true
+        rclone copy filebase:${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip || true
+        if [ -f mcbackup.zip ]; then
+          unzip mcbackup.zip -d server
+        fi
 
-    - name: Start Minecraft Server
+    - name: Download Paper Minecraft Server
+      run: |
+        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
+        mv paper.jar server/paper.jar
+        echo "eula=true" > server/eula.txt
+
+    - name: Start Minecraft Server in Screen
       run: |
         cd server
-        screen -dmS mc java -Xmx2G -jar paper.jar nogui
+        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-    - name: Restore Playit Config
+    - name: Start Tmate Session & Refresh SSH Every 15 min
       run: |
-        mkdir -p ~/.playit
-        echo "${{ secrets.PLAYIT_TOML }}" > ~/.playit/.playit.toml
+        git config --global user.name "auto"
+        git config --global user.email "auto@example.com"
 
-    - name: Start Playit and Save SSH Link
-      run: |
-        wget https://playit.gg/downloads/playit-linux-amd64 -O playit
-        chmod +x playit
-        ./playit &
+        while true; do
+          echo "Starting new tmate session..."
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
+          TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
 
-        sleep 20
+          echo "$TMATE_SSH" > links/ssh.txt
+          git pull origin main || true
+          git add links/ssh.txt
+          git commit -m "Update SSH link" || true
+          git push origin main || true
 
-        SSH_LINK=$(curl -s http://127.0.0.1:8080/ssh)
-        echo "$SSH_LINK" > links/ssh.txt
+          echo "Waiting 15 minutes..."
+          sleep 900
+        done
 
-        git config --global user.name "autobot"
-        git config --global user.email "bot@example.com"
-        git pull origin main
-        git add links/ssh.txt
-        git commit -m "Update SSH link" || true
-        git push origin main
-
-    - name: Backup to Filebase Every 30 Minutes
+    - name: Backup to Filebase every 30 minutes (loop)
       run: |
         while true; do
+          echo "Zipping world..."
           zip -r mcbackup.zip server
-          aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
+          rclone copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}/
+          echo "Backup uploaded!"
           sleep 1800
         done
+      shell: bash
