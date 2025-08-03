@@ -1,4 +1,4 @@
-name: Minecraft with Filebase + Auto Backup + SSH Rotate
+name: Minecraft with Auto Backup + SSH Refresh
 
 on:
   workflow_dispatch:
@@ -17,11 +17,11 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y unzip wget default-jdk screen tmate zip
+        sudo apt install -y unzip wget default-jdk screen tmate zip git
         curl https://rclone.org/install.sh | sudo bash
         mkdir -p server backups links
 
-    - name: Configure Rclone
+    - name: Setup Rclone for Filebase
       run: |
         echo "[filebase]" > rclone.conf
         echo "type = s3" >> rclone.conf
@@ -34,7 +34,7 @@ jobs:
       run: |
         rclone --config=rclone.conf copy filebase:${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip . || true
         if [ -f mcbackup.zip ]; then
-          unzip mcbackup.zip -d server
+          unzip -o mcbackup.zip -d server
         fi
 
     - name: Download Paper Server
@@ -48,119 +48,40 @@ jobs:
         cd server
         screen -dmS mc java -Xmx2G -jar paper.jar nogui
 
-    - name: Start Backup + SSH Rotate Loop
+    - name: Auto Backup + Refresh SSH every 15/30 min
       run: |
-        git config --global user.name "Auto Updater"
-        git config --global user.email "auto@example.com"
+        git config --global user.name "Auto Bot"
+        git config --global user.email "bot@example.com"
 
-        while true; do
-          echo "[Backup] Zipping server..."
-          zip -r mcbackup.zip server
+        # Start background loop
+        (while true; do
+          START_TIME=$(date +%s)
 
-          echo "[Backup] Uploading to Filebase..."
-          rclone --config=rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
-
-          echo "[SSH] Starting new tmate session..."
+          echo "[SSH] Creating new tmate session..."
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH_LINK" | tee links/ssh.txt
 
-          echo "[Git] Updating ssh.txt in repo..."
+          echo "[Git] Pushing updated ssh.txt..."
           git pull origin main
           git add links/ssh.txt
-          git commit -m "Auto update SSH link" || true
+          git commit -m "Updated SSH link $(date)" || true
           git push origin main
 
-          echo "[Sleep] Waiting 30 minutes..."
-          sleep 1800
-        done          unzip mcbackup.zip -d server
-        fi
-
-    - name: Download Paper Server
-      run: |
-        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-        mv paper.jar server/paper.jar
-        echo "eula=true" > server/eula.txt
-
-    - name: Start Minecraft Server
-      run: |
-        cd server
-        screen -dmS mc java -Xmx2G -jar paper.jar nogui
-
-    - name: Start Backup + SSH Rotate Loop
-      run: |
-        git config --global user.name "Auto Updater"
-        git config --global user.email "auto@example.com"
-
-        while true; do
-          echo "[Backup] Zipping server..."
-          zip -r mcbackup.zip server
-
-          echo "[Backup] Uploading to Filebase..."
-          rclone --config=rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
-
-          echo "[SSH] Starting new tmate session..."
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH_LINK" | tee links/ssh.txt
-
-          echo "[Git] Updating ssh.txt in repo..."
-          git pull origin main
-          git add links/ssh.txt
-          git commit -m "Auto update SSH link" || true
-          git push origin main
-
-          echo "[Sleep] Waiting 30 minutes..."
-          sleep 1800
-        done
-    - name: Restore Backup from Filebase
-      run: |
-        rclone copy filebase:${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip mcbackup.zip || true
-        if [ -f mcbackup.zip ]; then
-          unzip mcbackup.zip -d server
-        fi
-
-    - name: Download Paper Minecraft Server
-      run: |
-        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-        mv paper.jar server/paper.jar
-        echo "eula=true" > server/eula.txt
-
-    - name: Start Minecraft Server in Screen
-      run: |
-        cd server
-        screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
-
-    - name: Start Tmate Session & Refresh SSH Every 15 min
-      run: |
-        git config --global user.name "auto"
-        git config --global user.email "auto@example.com"
-
-        while true; do
-          echo "Starting new tmate session..."
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-
-          echo "$TMATE_SSH" > links/ssh.txt
-          git pull origin main || true
-          git add links/ssh.txt
-          git commit -m "Update SSH link" || true
-          git push origin main || true
-
-          echo "Waiting 15 minutes..."
+          echo "[Sleep] Waiting 15 minutes for next SSH..."
           sleep 900
-        done
 
-    - name: Backup to Filebase every 30 minutes (loop)
-      run: |
-        while true; do
-          echo "Zipping world..."
-          zip -r mcbackup.zip server
-          rclone copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}/
-          echo "Backup uploaded!"
-          sleep 1800
-        done
-      shell: bash
+          # Every 2 SSH refreshes (30 minutes), do backup
+          ELAPSED=$(($(date +%s) - START_TIME))
+          if (( $ELAPSED >= 1800 )); then
+            echo "[Backup] Zipping server..."
+            zip -r mcbackup.zip server
+
+            echo "[Backup] Uploading to Filebase..."
+            rclone --config=rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
+          fi
+        done) &
+        
+        # Keep job alive
+        sleep 21600  # 6 hours
