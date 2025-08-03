@@ -1,136 +1,80 @@
-name: Minecraft Server with Auto Backup + SSH Rotation
+name: Minecraft Server with Auto Backup + SSH
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"  # Every 15 minutes
+    - cron: "0 */6 * * *"
 
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 350
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
+      FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+    - name: Checkout Repo
+      uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y zip unzip default-jdk tmate
-
-      - name: Setup Git & rclone
-        run: |
-          git config --global user.name "Auto Bot"
-          git config --global user.email "auto@example.com"
-          echo "${{ secrets.RCLONE_CONF }}" > rclone.conf
-
-      - name: Restore from Filebase (if any)
-        run: |
-          mkdir -p server
-          rclone --config rclone.conf copy filebase:${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip .
-          if [ -f mcbackup.zip ]; then
-            unzip -o mcbackup.zip -d .
-            echo "✅ Backup restored."
-          else
-            echo "❌ No backup found, starting fresh."
-          fi
-
-      - name: Download Minecraft Paper
-        run: |
-          cd server
-          if [ ! -f paper.jar ]; then
-            curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/175/downloads/paper-1.20.1-175.jar
-          fi
-          echo "eula=true" > eula.txt
-
-      - name: Start Minecraft Server
-        run: |
-          cd server
-          java -Xmx2G -Xms2G -jar paper.jar nogui &
-          echo $! > ../mc_pid.txt
-        timeout-minutes: 1
-
-      - name: Start Auto Backup + SSH Loop
-        run: |
-          cat > loop.sh << 'EOF'
-          #!/bin/bash
-          count=0
-          while true; do
-            echo "[tmate] Starting..."
-            tmate -S /tmp/tmate.sock new-session -d
-            tmate -S /tmp/tmate.sock wait tmate-ready
-            sshlink=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-            echo "$sshlink" | tee links/ssh.txt
-
-            echo "[git] Pushing SSH link..."
-            git pull origin main
-            git add links/ssh.txt
-            git commit -m "Updated SSH link $(date)" || true
-            git push origin main
-
-            count=$((count + 1))
-
-            if (( count % 2 == 0 )); then
-              echo "[Backup] Zipping server..."
-              zip -r mcbackup.zip server
-              echo "[Backup] Uploading to Filebase..."
-              rclone --config rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
-            fi
-
-            echo "[Sleep] Waiting 15 mins..."
-            sleep 900
-          done
-          EOF
-          chmod +x loop.sh
-          ./loop.sh          unzip -o mcbackup.zip -d server
-        fi
-
-    - name: Download Paper Server
+    - name: Install Dependencies
       run: |
-        wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/103/downloads/paper-1.20.1-103.jar
-        mv paper.jar server/paper.jar
-        echo "eula=true" > server/eula.txt
+        sudo apt update
+        sudo apt install -y openjdk-17-jre tmate unzip curl
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
 
-    - name: Start Minecraft Server
+    - name: Restore Backup from Filebase
+      run: |
+        mkdir -p server
+        cd server
+        aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || exit 0
+        unzip -o mcbackup.zip || echo "No backup found"
+
+    - name: Download PaperMC
       run: |
         cd server
-        screen -dmS mc java -Xmx2G -jar paper.jar nogui
+        curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/183/downloads/paper-1.20.1-183.jar
+        echo "eula=true" > eula.txt
 
-    - name: Auto Backup + Refresh SSH every 15/30 min
+    - name: Start Minecraft Server in Background
+      run: |
+        cd server
+        nohup java -Xmx2G -Xms2G -jar paper.jar nogui > log.txt 2>&1 &
+
+    - name: Start SSH Auto-Rotation + Backup
       run: |
         git config --global user.name "Auto Bot"
-        git config --global user.email "bot@example.com"
+        git config --global user.email "auto@bot.com"
+        mkdir -p links
 
-        # Start background loop
-        (while true; do
-          START_TIME=$(date +%s)
-
-          echo "[SSH] Creating new tmate session..."
+        while true; do
+          # Kill old tmate
+          pkill tmate || true
+          
+          # Start new tmate
           tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
-          SSH_LINK=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          echo "$SSH_LINK" | tee links/ssh.txt
+          sleep 5
+          TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
 
-          echo "[Git] Pushing updated ssh.txt..."
-          git pull origin main
+          echo "$TMATE_SSH" > links/ssh.txt
+
           git add links/ssh.txt
-          git commit -m "Updated SSH link $(date)" || true
+          git commit -m "Updated SSH link $(date -u)"
           git push origin main
 
-          echo "[Sleep] Waiting 15 minutes for next SSH..."
+          echo "[SSH] New link pushed: $TMATE_SSH"
+          
+          # Background 30-min backup
+          ( sleep 900 && \
+            cd server && \
+            zip -r ../mcbackup.zip . && \
+            aws --endpoint-url=https://s3.filebase.com s3 cp ../mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && \
+            echo "[Backup] Uploaded at $(date -u)"
+          ) &
+
           sleep 900
-
-          # Every 2 SSH refreshes (30 minutes), do backup
-          ELAPSED=$(($(date +%s) - START_TIME))
-          if (( $ELAPSED >= 1800 )); then
-            echo "[Backup] Zipping server..."
-            zip -r mcbackup.zip server
-
-            echo "[Backup] Uploading to Filebase..."
-            rclone --config=rclone.conf copy mcbackup.zip filebase:${{ secrets.FILEBASE_BUCKET }}
-          fi
-        done) &
-        
-        # Keep job alive
-        sleep 21600  # 6 hours
+        done
