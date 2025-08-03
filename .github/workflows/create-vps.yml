@@ -8,7 +8,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # 6 hours
 
     steps:
     - name: Checkout Repository
@@ -17,7 +17,7 @@ jobs:
     - name: Install Packages
       run: |
         sudo apt update
-        sudo apt install -y unzip wget default-jdk tmate screen zip
+        sudo apt install -y unzip wget default-jdk tmate screen zip awscli
         mkdir -p server backups
 
     - name: Configure AWS Credentials for Filebase
@@ -49,31 +49,27 @@ jobs:
         cd server
         screen -dmS minecraft java -Xmx2G -jar paper.jar nogui
 
-    - name: Save tmate SSH and wait (debug)
+    - name: Start tmate and Save SSH Link
       run: |
-        set -x
         mkdir -p links
         tmate -S /tmp/tmate.sock new-session -d
-        tmate -S /tmp/tmate.sock wait tmate-ready
+        timeout 60 bash -c "until tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' &>/dev/null; do sleep 2; done"
         TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-        echo "TMATE SSH LINK: $TMATE_SSH"
-        echo "$TMATE_SSH" > links/ssh.txt
+        echo "$TMATE_SSH" | tee links/ssh.txt
         git config --global user.name "auto"
         git config --global user.email "auto@example.com"
-        git pull origin main
+        git pull origin main || true
         git add links/ssh.txt
         git commit -m "Update SSH link" || true
-        git push origin main
-        echo "Starting tail to keep session alive..."
-        tail -f /dev/null
+        git push origin main || true
 
-    - name: Auto Backup Every 30 Minutes
+    - name: Backup Every 30 Minutes
       run: |
         while true; do
           echo "Zipping server directory..."
-          zip -r mcbackup.zip server
+          zip -r -q mcbackup.zip server
           echo "Uploading to Filebase..."
           aws s3 cp mcbackup.zip s3://${{ secrets.FILEBASE_BUCKET }}/mcbackup.zip --endpoint-url=https://s3.filebase.com
-          echo "Backup complete. Waiting 30 minutes..."
+          echo "Backup done. Sleeping 30 minutes..."
           sleep 1800
         done
