@@ -6,6 +6,9 @@ git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
 
+# Initial pull to sync latest ssh.txt
+git pull --rebase origin main || true
+
 # Loop forever
 LOOP=0
 while true; do
@@ -19,9 +22,12 @@ while true; do
   
   echo "$TMATE_SSH" > links/ssh.txt
 
+  # Git commit and push safely
+  git pull --rebase origin main || true
   git add links/ssh.txt
-  git commit -m "Updated SSH link $(date -u)"
-  git push origin main
+  git commit -m "Updated SSH link $(date -u)" || true
+  git push origin main || true
+
   echo "[SSH] New SSH link pushed at $(date -u): $TMATE_SSH"
 
   # Every 2 loops = every 30 minutes (15 min * 2)
