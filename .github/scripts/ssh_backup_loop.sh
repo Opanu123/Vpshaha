@@ -1,27 +1,23 @@
 #!/bin/bash
 set -e
 
-# Setup Git
 git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
 
-# Initial pull to avoid push rejection
 git pull --rebase origin main || true
 
 LOOP=0
 while true; do
-  # Kill old tmate if exists
   pkill tmate || true
 
-  # Start new tmate session
   tmate -S /tmp/tmate.sock new-session -d
   sleep 5
   TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
 
+  mkdir -p links
   echo "$TMATE_SSH" > links/ssh.txt
 
-  # Git pull → add → commit → push
   git pull --rebase origin main || true
   git add links/ssh.txt
   git commit -m "Updated SSH link $(date -u)" || true
@@ -29,24 +25,27 @@ while true; do
 
   echo "[SSH] New SSH link pushed at $(date -u): $TMATE_SSH"
 
-  # Backup every 30 mins (every 2 loops)
   if (( LOOP % 2 == 0 )); then
     echo "[Backup] Starting backup at $(date -u)"
 
-    # Backup Minecraft server
-    cd server || exit 1
-    zip -r ../mcbackup.zip . >/dev/null
-    cd ..
+    # Minecraft backup
+    if [ -d server ]; then
+      cd server || exit 1
+      zip -r ../mcbackup.zip . >/dev/null
+      cd ..
+    else
+      echo "Minecraft server folder 'server' not found!"
+    fi
 
-    # Backup Tailscale state
-    sudo mkdir -p /opt/vps-backup/data
-    sudo cp /var/lib/tailscale/tailscaled.state /opt/vps-backup/data/ || echo "No tailscaled.state to backup"
+    # Prepare tailscale backup folder with correct permissions
+    sudo mkdir -p /tmp/tailscale_backup_data
+    sudo cp /var/lib/tailscale/tailscaled.state /tmp/tailscale_backup_data/ || echo "No tailscaled.state to backup"
+    sudo chown -R $USER:$USER /tmp/tailscale_backup_data
 
-    # Zip Tailscale backup separately or include in mcbackup.zip as needed
-    cd /opt/vps-backup || mkdir -p /opt/vps-backup
-    zip -r /tmp/full_backup.zip data || echo "No tailscale data to zip"
+    cd /tmp
+    zip -r full_backup.zip tailscale_backup_data || echo "No tailscale data to zip"
 
-    # Upload Minecraft backup with retry
+    # Upload Minecraft backup with retries
     n=0
     until [ $n -ge 3 ]; do
       aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
@@ -61,10 +60,10 @@ while true; do
       echo "[Backup] Uploaded Minecraft backup to Filebase at $(date -u)"
     fi
 
-    # Upload Tailscale backup with retry
+    # Upload Tailscale backup with retries
     m=0
     until [ $m -ge 3 ]; do
-      aws --endpoint-url=https://s3.filebase.com s3 cp /tmp/full_backup.zip s3://$FILEBASE_BUCKET/tailscaled_backup.zip && break
+      aws --endpoint-url=https://s3.filebase.com s3 cp full_backup.zip s3://$FILEBASE_BUCKET/tailscaled_backup.zip && break
       echo "[Backup] Tailscale upload failed. Retry in 30s..."
       sleep 30
       m=$((m+1))
