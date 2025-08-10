@@ -1,4 +1,4 @@
-name: Minecraft Server with Auto Backup + SSH
+name: Minecraft Server with Auto Backup + Playit Agent + SSH
 
 on:
   workflow_dispatch:
@@ -27,18 +27,40 @@ jobs:
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-      - name: Restore Backup from Filebase
-        run: |
-          mkdir -p server
-          cd server
-          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || exit 0
-          unzip -o mcbackup.zip || echo "No backup found"
+          # Download Playit agent binary and make executable
+          curl -Lo playit https://cdn.playit.gg/playit-linux
+          chmod +x playit
 
-      - name: Download PaperMC
+      - name: Restore Backup from Filebase (server + playit.toml)
         run: |
-          cd server
-          curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/183/downloads/paper-1.20.1-183.jar
-          echo "eula=true" > eula.txt
+          mkdir -p restore_temp
+          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No backup found"
+          unzip -o mcbackup.zip -d restore_temp || echo "No backup zip"
+
+          # Restore Minecraft server files
+          mkdir -p server
+          rsync -a restore_temp/server/ server/
+
+          # Restore playit config if exists
+          if [ -f restore_temp/.playit.toml ]; then
+            mkdir -p ~/.playit
+            cp restore_temp/.playit.toml ~/.playit/
+            echo "Restored playit.toml"
+          fi
+
+      - name: Claim Playit agent if no config
+        run: |
+          if [ ! -f ~/.playit/.playit.toml ]; then
+            echo "No playit config found. Claiming agent..."
+            ./playit claim <YOUR_PLAYIT_CLAIM_CODE>
+            echo "playit config claimed."
+          else
+            echo "playit.toml already exists, skipping claim."
+          fi
+
+      - name: Start Playit agent
+        run: |
+          ./playit start &
 
       - name: Start Minecraft Server in Screen
         run: |
