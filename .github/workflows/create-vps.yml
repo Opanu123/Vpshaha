@@ -1,9 +1,9 @@
-name: Minecraft Server with Auto Backup + SSH
+name: Persistent Minecraft VPS with Tailscale + Filebase Backup
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *" # every 6 hours
+    - cron: '0 */6 * * *'  # Every 6 hours
 
 jobs:
   minecraft:
@@ -14,34 +14,49 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
       FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install prerequisites
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen
-          # AWS CLI install
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen gnupg
+
+      - name: Install or update AWS CLI
+        run: |
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-      - name: Restore Backup from Filebase
+      - name: Download Minecraft backup from Filebase
         run: |
           mkdir -p server
-          cd server
-          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No backup found"
-          unzip -o mcbackup.zip || echo "No backup to restore"
-          cd ..
+          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No mcbackup.zip found"
+          unzip -o mcbackup.zip -d server || echo "No Minecraft backup to restore"
 
-      - name: Start Minecraft Server in screen
+      - name: Download Tailscale state backup
         run: |
-          cd server
-          screen -dmS mc java -Xmx14G -Xms2G -jar paper.jar nogui
-          cd ..
+          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/tailscaled.state tailscaled.state || echo "No tailscaled.state backup found"
 
-      - name: Start your backup loop script
+      - name: Setup Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo mkdir -p /var/lib/tailscale
+          if [ -f tailscaled.state ]; then
+            sudo cp tailscaled.state /var/lib/tailscale/tailscaled.state
+            sudo chmod 600 /var/lib/tailscale/tailscaled.state
+          fi
+          sudo tailscaled &
+          sleep 8
+          sudo tailscale up --authkey "$TAILSCALE_AUTHKEY" --hostname=mc-vps || echo "Tailscale up failed or already running"
+
+      - name: Start Minecraft server in screen
+        run: |
+          screen -dmS mc java -Xmx14G -Xms2G -jar server/paper.jar nogui
+
+      - name: Run backup loop script
         run: |
           bash .github/scripts/ssh_backup_loop.sh
