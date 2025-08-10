@@ -1,1 +1,0 @@
-ssh bsCAvkLT2ESNrdPK5nJFm5gGM@nyc1.tmate.io
