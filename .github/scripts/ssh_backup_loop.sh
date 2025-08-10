@@ -9,6 +9,7 @@ mkdir -p links
 # Initial pull to avoid push rejection
 git pull --rebase origin main || true
 
+# Loop forever
 LOOP=0
 while true; do
   # Kill old tmate if exists
@@ -19,8 +20,6 @@ while true; do
   sleep 5
   TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
 
-  # Ensure links folder exists and write SSH link
-  mkdir -p links
   echo "$TMATE_SSH" > links/ssh.txt
 
   # Git pull → add → commit → push
@@ -34,67 +33,23 @@ while true; do
   # Backup every 30 mins (every 2 loops)
   if (( LOOP % 2 == 0 )); then
     echo "[Backup] Starting backup at $(date -u)"
+    cd server || exit 1
+    zip -r ../mcbackup.zip . >/dev/null
+    cd ..
 
-    # Backup Minecraft server (from 'server' directory)
-    if [ -d server ]; then
-      zip -r mcbackup.zip server >/dev/null
+    # Upload with retry
+    n=0
+    until [ $n -ge 3 ]; do
+      aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
+      echo "[Backup] Upload failed. Retry in 30s..."
+      sleep 30
+      n=$((n+1))
+    done
+
+    if [ $n -eq 3 ]; then
+      echo "[Backup] Failed to upload after 3 attempts!"
     else
-      echo "[Backup] Warning: 'server' directory not found, skipping Minecraft backup"
-    fi
-
-    # Backup Tailscale state with proper permission handling
-    sudo mkdir -p /opt/vps-backup/data
-    if sudo test -f /var/lib/tailscale/tailscaled.state; then
-      sudo cp /var/lib/tailscale/tailscaled.state /opt/vps-backup/data/
-    else
-      echo "[Backup] Warning: tailscaled.state not found, skipping Tailscale backup"
-    fi
-
-    # Zip Tailscale backup
-    cd /opt/vps-backup || mkdir -p /opt/vps-backup
-    if [ -d data ]; then
-      zip -r /tmp/tailscale_backup.zip data >/dev/null
-    else
-      echo "[Backup] Warning: /opt/vps-backup/data directory missing, skipping tailscale zip"
-    fi
-    cd -
-
-    # Upload Minecraft backup with retry
-    if [ -f mcbackup.zip ]; then
-      n=0
-      until [ $n -ge 3 ]; do
-        aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
-        echo "[Backup] Minecraft upload failed. Retry in 30s..."
-        sleep 30
-        n=$((n+1))
-      done
-
-      if [ $n -eq 3 ]; then
-        echo "[Backup] Failed to upload Minecraft backup after 3 attempts!"
-      else
-        echo "[Backup] Uploaded Minecraft backup to Filebase at $(date -u)"
-      fi
-    else
-      echo "[Backup] Minecraft backup file mcbackup.zip does not exist!"
-    fi
-
-    # Upload Tailscale backup with retry
-    if [ -f /tmp/tailscale_backup.zip ]; then
-      m=0
-      until [ $m -ge 3 ]; do
-        aws --endpoint-url=https://s3.filebase.com s3 cp /tmp/tailscale_backup.zip s3://$FILEBASE_BUCKET/tailscaled_backup.zip && break
-        echo "[Backup] Tailscale upload failed. Retry in 30s..."
-        sleep 30
-        m=$((m+1))
-      done
-
-      if [ $m -eq 3 ]; then
-        echo "[Backup] Failed to upload Tailscale backup after 3 attempts!"
-      else
-        echo "[Backup] Uploaded Tailscale backup to Filebase at $(date -u)"
-      fi
-    else
-      echo "[Backup] Tailscale backup file tailscale_backup.zip does not exist!"
+      echo "[Backup] Uploaded to Filebase at $(date -u)"
     fi
   fi
 
