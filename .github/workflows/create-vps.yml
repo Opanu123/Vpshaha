@@ -51,27 +51,25 @@ jobs:
         id: claim_playit
         run: |
           if [ ! -f ~/.playit.toml ]; then
-            URL=$(playit agent claim | tee /dev/tty)
+            OUTPUT=$(playit agent claim)
+            echo "$OUTPUT"
+            CLAIM_URL=$(echo "$OUTPUT" | grep -Eo 'https?://[^ ]+')
             cp ~/.playit.toml ~/playit_backup.toml
-            echo "claim_url=$URL" >> $GITHUB_OUTPUT
+            echo "claim_url=$CLAIM_URL" >> $GITHUB_OUTPUT
           else
             echo "Playit config found, skipping claim."
+            echo "claim_url=" >> $GITHUB_OUTPUT
           fi
 
       - name: Show Playit claim URL (only if claimed)
         if: steps.claim_playit.outputs.claim_url != ''
-        run: echo "Claim URL: ${{ steps.claim_playit.outputs.claim_url }}"
+        run: |
+          echo "Claim URL:"
+          echo "${{ steps.claim_playit.outputs.claim_url }}"
 
       - name: Start Playit agent with saved config
         run: |
           playit agent start
-
-      - name: Download PaperMC server jar
-        run: |
-          cd server
-          curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/183/downloads/paper-1.20.1-183.jar
-          echo "eula=true" > eula.txt
-          cd ..
 
       - name: Start Minecraft Server in screen
         run: |
