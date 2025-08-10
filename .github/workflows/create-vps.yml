@@ -22,16 +22,13 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen
-
-      - name: Install Playit Agent
-        run: |
-          curl -Lo playit https://cdn.playit.gg/playit-linux
-          chmod +x playit
-          sudo mv playit /usr/local/bin/
-
-      - name: Install AWS CLI
-        run: |
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen gnupg
+          # Install playit agent repo and package
+          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          sudo apt update
+          sudo apt install -y playit
+          # AWS CLI install
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
@@ -44,38 +41,37 @@ jobs:
           unzip -o mcbackup.zip || echo "No backup to restore"
           cd ..
 
-      - name: Restore Playit Config if Backup Exists
+      - name: Restore Playit config if backup exists
         run: |
           if [ -f ~/playit_backup.toml ]; then
             cp ~/playit_backup.toml ~/.playit.toml
           fi
 
-      - name: Claim Playit Agent if No Config Exists (print claim URL)
+      - name: Claim Playit agent if no config exists (print claim URL)
         id: claim_playit
         run: |
           if [ ! -f ~/.playit.toml ]; then
-            CLAIM_URL=$(playit agent claim)
+            URL=$(playit claim | tee /dev/tty)
             cp ~/.playit.toml ~/playit_backup.toml
-            echo "claim_url=$CLAIM_URL" >> $GITHUB_OUTPUT
+            echo "claim_url=$URL" >> $GITHUB_OUTPUT
           else
             echo "Playit config found, skipping claim."
           fi
 
-      - name: Show Playit Claim URL (only if claimed)
+      - name: Show Playit claim URL (only if claimed)
         if: steps.claim_playit.outputs.claim_url != ''
-        run: echo "[Claim URL:
-        ${{ steps.claim_playit.outputs.claim_url }}]"
+        run: 'echo "Claim URL: ${{ steps.claim_playit.outputs.claim_url }}"'
 
-      - name: Start Playit Agent with Saved Config
+      - name: Start Playit agent with saved config
         run: |
-          playit agent start
+          playit start &
 
-      - name: Start Minecraft Server in Screen
+      - name: Start Minecraft Server from restored backup
         run: |
           cd server
           screen -dmS mc java -Xmx14G -Xms2G -jar paper.jar nogui
           cd ..
 
-      - name: Start Backup Loop Script
+      - name: Start your backup loop script
         run: |
           bash .github/scripts/ssh_backup_loop.sh
