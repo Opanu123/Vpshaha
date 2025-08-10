@@ -1,9 +1,9 @@
-name: Minecraft Server with Auto Backup + Playit Agent + SSH
+name: Minecraft Server with Playit & Backup + SSH Access
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # Every 6 hours
+    - cron: "0 */6 * * *"  # every 6 hours
 
 jobs:
   minecraft:
@@ -19,48 +19,56 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen gnupg2
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-          # Download Playit agent binary and make executable
-          curl -Lo playit https://cdn.playit.gg/playit-linux
-          chmod +x playit
-
-      - name: Restore Backup from Filebase (server + playit.toml)
+      - name: Install Playit Agent via PPA
         run: |
-          mkdir -p restore_temp
-          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No backup found"
-          unzip -o mcbackup.zip -d restore_temp || echo "No backup zip"
+          curl -SsL https://playit-cloud.github.io/ppa/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/playit.gpg >/dev/null
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/playit.gpg] https://playit-cloud.github.io/ppa/data ./" | sudo tee /etc/apt/sources.list.d/playit-cloud.list
+          sudo apt update
+          sudo apt install -y playit
 
-          # Restore Minecraft server files
+      - name: Restore Minecraft backup from Filebase
+        run: |
           mkdir -p server
-          rsync -a restore_temp/server/ server/
+          cd server
+          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No backup found"
+          unzip -o mcbackup.zip || echo "No mcbackup.zip to unzip"
 
-          # Restore playit config if exists
-          if [ -f restore_temp/.playit.toml ]; then
-            mkdir -p ~/.playit
-            cp restore_temp/.playit.toml ~/.playit/
-            echo "Restored playit.toml"
-          fi
-
-      - name: Claim Playit agent if no config
+      - name: Restore Playit config if exists
         run: |
-          if [ ! -f ~/.playit/.playit.toml ]; then
-            echo "No playit config found. Claiming agent..."
-            ./playit claim <YOUR_PLAYIT_CLAIM_CODE>
-            echo "playit config claimed."
+          if [ -f ./server/.playit.toml ]; then
+            cp ./server/.playit.toml ~/.playit.toml
+            echo "Restored existing playit.toml"
           else
-            echo "playit.toml already exists, skipping claim."
+            echo "No existing playit.toml found"
           fi
 
-      - name: Start Playit agent
+      - name: Claim Playit Agent & Start tunnels if no config
         run: |
-          ./playit start &
+          if [ ! -f ~/.playit.toml ]; then
+            nohup playit agent claim <YOUR_PLAYIT_CLAIM_CODE> &
+            sleep 15
+            nohup playit tunnel add minecraft-java --port 25565 --proto tcp &
+            nohup playit tunnel add minecraft-bedrock --port 19132 --proto udp &
+            nohup playit tunnel start &
+            sleep 10
+            cp ~/.playit.toml ./server/.playit.toml
+            echo "Claimed new Playit agent and started tunnels"
+          else
+            echo "Playit config exists, skipping claim"
+            nohup playit tunnel start &
+            sleep 10
+          fi
+
+      - name: Show Playit tunnels info
+        run: playit tunnel list
 
       - name: Start Minecraft Server in Screen
         run: |
