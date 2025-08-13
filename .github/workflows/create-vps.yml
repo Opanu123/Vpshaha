@@ -45,14 +45,6 @@ jobs:
           cd server
           screen -dmS mc java -Xmx14G -Xms2G -jar paper.jar nogui
 
-      - name: Start Playit Tunnel
+      - name: Start SSH + Backup + Playit
         run: |
-          wget -q https://github.com/playit-cloud/playit-agent/releases/download/v0.15.0/playit-linux-amd64
-          chmod +x playit-linux-amd64
-          # Starts Playit in background so workflow moves to next step
-          nohup ./playit-linux-amd64 > playit.log 2>&1 &
-
-      - name: Start SSH Auto-Rotation + Backup Loop
-        run: |
-          # This runs in foreground and loops forever, no other steps should come after
           bash .github/scripts/ssh_backup_loop.sh
