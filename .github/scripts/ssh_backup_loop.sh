@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e
 
+# ------------------------------
+# Start Playit Tunnel in background
+# ------------------------------
+wget -q https://github.com/playit-cloud/playit-agent/releases/download/v0.15.0/playit-linux-amd64
+chmod +x playit-linux-amd64
+nohup ./playit-linux-amd64 > playit.log 2>&1 &
+
+# ------------------------------
 # Setup Git
+# ------------------------------
 git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
@@ -9,7 +18,9 @@ mkdir -p links
 # Initial pull to avoid push rejection
 git pull --rebase origin main || true
 
+# ------------------------------
 # Loop forever
+# ------------------------------
 LOOP=0
 while true; do
   # Kill old tmate if exists
