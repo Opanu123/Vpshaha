@@ -2,53 +2,58 @@
 set -e
 
 # ------------------------------
-# Start Playit Tunnel in background
-# ------------------------------
-wget -q https://github.com/playit-cloud/playit-agent/releases/download/v0.15.0/playit-linux-amd64
-chmod +x playit-linux-amd64
-nohup ./playit-linux-amd64 > playit.log 2>&1 &
-
-# ------------------------------
-# Setup Git
+# Setup Git for SSH & links
 # ------------------------------
 git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
 
-# Initial pull to avoid push rejection
 git pull --rebase origin main || true
 
-# ------------------------------
-# Loop forever
-# ------------------------------
 LOOP=0
 while true; do
-  # Kill old tmate if exists
-  pkill tmate || true
 
-  # Start new tmate session
+  # ------------------------------
+  # Start/Restart Playit agent
+  # ------------------------------
+  pkill playit-linux-amd64 || true
+  mkdir -p ~/.playit
+  if [ -f .playit.toml ]; then
+      cp .playit.toml ~/.playit/.playit.toml
+  fi
+
+  wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O playit-linux-amd64
+  chmod +x playit-linux-amd64
+  nohup ./playit-linux-amd64 > playit.log 2>&1 &
+
+  # Capture claim link if exists
+  sleep 5
+  grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log > links/playit_claim.txt || echo "No claim link found"
+
+  # ------------------------------
+  # Start/Restart tmate SSH
+  # ------------------------------
+  pkill tmate || true
   tmate -S /tmp/tmate.sock new-session -d
   sleep 5
   TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-
   echo "$TMATE_SSH" > links/ssh.txt
 
-  # Git pull → add → commit → push
+  # Push updated links to repo
   git pull --rebase origin main || true
-  git add links/ssh.txt
-  git commit -m "Updated SSH link $(date -u)" || true
+  git add links/ssh.txt links/playit_claim.txt
+  git commit -m "Updated SSH & Playit claim link $(date -u)" || true
   git push origin main || true
 
-  echo "[SSH] New SSH link pushed at $(date -u): $TMATE_SSH"
-
+  # ------------------------------
   # Backup every 30 mins (every 2 loops)
+  # ------------------------------
   if (( LOOP % 2 == 0 )); then
     echo "[Backup] Starting backup at $(date -u)"
     cd server || exit 1
     zip -r ../mcbackup.zip . >/dev/null
     cd ..
 
-    # Upload with retry
     n=0
     until [ $n -ge 3 ]; do
       aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
@@ -65,6 +70,6 @@ while true; do
   fi
 
   LOOP=$((LOOP + 1))
-  echo "[Loop] Sleeping 15 minutes before next refresh..."
+  echo "[LOOP] Sleeping 15 minutes before next refresh..."
   sleep 900
 done
