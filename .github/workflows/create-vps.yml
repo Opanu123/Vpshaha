@@ -47,4 +47,4 @@ jobs:
 
       - name: Start SSH + Backup + Playit
         run: |
-          bash .github/scripts/ssh_backup_loop.sh
+          bash .github/scripts/ssh_playit_loop.sh
