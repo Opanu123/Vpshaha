@@ -22,12 +22,15 @@ while true; do
       cp .playit.toml ~/.playit/.playit.toml
   fi
 
-  # Only download binary if missing to avoid "Text file busy"
-  if [ ! -f playit-linux-amd64 ]; then
-      wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O playit-linux-amd64
-      chmod +x playit-linux-amd64
-  fi
+  # Download new binary to temporary file
+  TMP_BINARY="playit-linux-amd64.new"
+  wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O "$TMP_BINARY"
+  chmod +x "$TMP_BINARY"
 
+  # Replace old binary safely
+  mv "$TMP_BINARY" playit-linux-amd64
+
+  # Start agent in background
   nohup ./playit-linux-amd64 > playit.log 2>&1 &
 
   # Capture claim link if exists (only first time)
