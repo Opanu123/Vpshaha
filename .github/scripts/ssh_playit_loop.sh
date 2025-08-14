@@ -14,19 +14,23 @@ LOOP=0
 while true; do
 
   # ------------------------------
-  # Start/Restart Playit agent
+  # Start/Restart Playit agent safely
   # ------------------------------
-  pkill playit-linux-amd64 || true
+  pkill -f playit-linux-amd64 || true
   mkdir -p ~/.playit
   if [ -f .playit.toml ]; then
       cp .playit.toml ~/.playit/.playit.toml
   fi
 
-  wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O playit-linux-amd64
-  chmod +x playit-linux-amd64
+  # Only download binary if missing to avoid "Text file busy"
+  if [ ! -f playit-linux-amd64 ]; then
+      wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O playit-linux-amd64
+      chmod +x playit-linux-amd64
+  fi
+
   nohup ./playit-linux-amd64 > playit.log 2>&1 &
 
-  # Capture claim link if exists
+  # Capture claim link if exists (only first time)
   sleep 5
   grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log > links/playit_claim.txt || echo "No claim link found"
 
