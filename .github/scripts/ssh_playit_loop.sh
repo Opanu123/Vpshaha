@@ -8,33 +8,41 @@ git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
 
-git pull --rebase origin main || true
+git fetch origin main
+git reset --hard origin/main
 
+# ------------------------------
+# AWS CLI config for Filebase
+# ------------------------------
+aws configure set aws_access_key_id "$FILEBASE_ACCESS_KEY"
+aws configure set aws_secret_access_key "$FILEBASE_SECRET_KEY"
+aws configure set default.region us-east-1
+
+# ------------------------------
+# Loop control
+# ------------------------------
 LOOP=0
 while true; do
+  echo "[INFO] Loop #$LOOP starting at $(date -u)"
 
   # ------------------------------
   # Start/Restart Playit agent safely
   # ------------------------------
   pkill -f playit-linux-amd64 || true
-  mkdir -p ~/.playit
+  mkdir -p ~/.config/playit
   if [ -f .playit.toml ]; then
-      cp .playit.toml ~/.playit/.playit.toml
+      cp .playit.toml ~/.config/playit/playit.toml
   fi
 
-  # Download new binary to temporary file
   TMP_BINARY="playit-linux-amd64.new"
   wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O "$TMP_BINARY"
   chmod +x "$TMP_BINARY"
-
-  # Replace old binary safely
   mv "$TMP_BINARY" playit-linux-amd64
 
-  # Start agent in background
   nohup ./playit-linux-amd64 > playit.log 2>&1 &
 
-  # Capture claim link if exists (only first time)
-  sleep 5
+  # Wait for Playit to print claim link
+  sleep 15
   grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log > links/playit_claim.txt || echo "No claim link found"
 
   # ------------------------------
@@ -42,12 +50,16 @@ while true; do
   # ------------------------------
   pkill tmate || true
   tmate -S /tmp/tmate.sock new-session -d
-  sleep 5
+  tmate -S /tmp/tmate.sock wait tmate-ready 30 || true
+  sleep 3
   TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
   echo "$TMATE_SSH" > links/ssh.txt
 
+  # ------------------------------
   # Push updated links to repo
-  git pull --rebase origin main || true
+  # ------------------------------
+  git fetch origin main
+  git reset --hard origin/main
   git add links/ssh.txt links/playit_claim.txt
   git commit -m "Updated SSH & Playit claim link $(date -u)" || true
   git push origin main || true
@@ -57,9 +69,13 @@ while true; do
   # ------------------------------
   if (( LOOP % 2 == 0 )); then
     echo "[Backup] Starting backup at $(date -u)"
-    cd server || exit 1
-    zip -r ../mcbackup.zip . >/dev/null
-    cd ..
+    if [ -d server ]; then
+      cd server
+      zip -r ../mcbackup.zip . >/dev/null
+      cd ..
+    else
+      echo "[Backup] WARNING: No 'server' directory found, skipping backup."
+    fi
 
     n=0
     until [ $n -ge 3 ]; do
@@ -77,6 +93,6 @@ while true; do
   fi
 
   LOOP=$((LOOP + 1))
-  echo "[LOOP] Sleeping 15 minutes before next refresh..."
+  echo "[INFO] Sleeping 15 minutes before next refresh..."
   sleep 900
 done
