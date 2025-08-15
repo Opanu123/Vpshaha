@@ -1,1 +1,0 @@
-ssh UCH9dnWWZvtmF4QZ67xz9Fejr@nyc1.tmate.io
