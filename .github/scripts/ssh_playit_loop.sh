@@ -19,6 +19,12 @@ aws configure set aws_secret_access_key "$FILEBASE_SECRET_KEY"
 aws configure set default.region us-east-1
 
 # ------------------------------
+# Try restoring saved Playit config
+# ------------------------------
+mkdir -p ~/.config/playit
+aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit/playit.toml || echo "No saved config yet"
+
+# ------------------------------
 # Loop control
 # ------------------------------
 LOOP=0
@@ -29,7 +35,6 @@ while true; do
   # Start/Restart Playit agent safely
   # ------------------------------
   pkill -f playit-linux-amd64 || true
-  mkdir -p ~/.config/playit
   if [ -f .playit.toml ]; then
       cp .playit.toml ~/.config/playit/playit.toml
   fi
@@ -41,9 +46,24 @@ while true; do
 
   nohup ./playit-linux-amd64 > playit.log 2>&1 &
 
-  # Wait for Playit to print claim link
+  # Wait for Playit output
   sleep 15
-  grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log > links/playit_claim.txt || echo "No claim link found"
+  claim_url=$(grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log | head -n 1)
+
+  if [ -n "$claim_url" ]; then
+      echo "$claim_url" > links/playit_claim.txt
+      echo "[INFO] New claim link found: $claim_url"
+  else
+      echo "[INFO] No new claim link — keeping old file."
+  fi
+
+  # ------------------------------
+  # Save .playit.toml after claim
+  # ------------------------------
+  if [ -f ~/.config/playit/playit.toml ]; then
+      cp ~/.config/playit/playit.toml .playit.toml
+      aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit/playit.toml s3://$FILEBASE_BUCKET/playit.toml
+  fi
 
   # ------------------------------
   # Start/Restart tmate SSH
@@ -65,7 +85,7 @@ while true; do
   git push origin main || true
 
   # ------------------------------
-  # Backup every 30 mins (every 2 loops)
+  # Backup server every 30 mins (every 2 loops)
   # ------------------------------
   if (( LOOP % 2 == 0 )); then
     echo "[Backup] Starting backup at $(date -u)"
