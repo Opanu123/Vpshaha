@@ -1,109 +1,112 @@
 #!/bin/bash
 set -e
 
-# ------------------------------
-# Setup Git for SSH & links
-# ------------------------------
+# =========================
+# Git Setup
+# =========================
 git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
-git fetch origin main
-git reset --hard origin/main
 
-# ------------------------------
-# Ensure Playit agent exists
-# ------------------------------
+# Initial pull to avoid push rejection
+git pull --rebase origin main || true
+
+# =========================
+# Playit Setup
+# =========================
 AGENT_BIN="./playit-linux-amd64"
+
+# Download Playit if missing
 if [ ! -f "$AGENT_BIN" ]; then
-    echo "[Playit] Downloading agent..."
-    wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O "$AGENT_BIN"
-    chmod +x "$AGENT_BIN"
+  echo "[Playit] Downloading agent..."
+  curl -L -o playit-linux-amd64 https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
+  chmod +x playit-linux-amd64
 fi
 
-# ------------------------------
-# Restore Playit config if exists
-# ------------------------------
+# Restore .playit.toml from Filebase if available
 mkdir -p ~/.config/playit
-aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit/playit.toml || echo "[Playit] No saved config yet"
+aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit/playit.toml || true
 
-# ------------------------------
-# Restore Playit claim link (only if missing)
-# ------------------------------
-if [ ! -f links/playit_claim.txt ]; then
-    aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit_claim.txt links/playit_claim.txt || echo "[Playit] No saved claim link yet"
-fi
-
-# ------------------------------
-# Start Playit agent continuously
-# ------------------------------
+# Start Playit agent
 pkill -f playit-linux-amd64 || true
 nohup $AGENT_BIN > playit.log 2>&1 &
-sleep 15
+sleep 10
 
-# Claim tunnel if missing
+# Claim if not already claimed
 if [ ! -f ~/.config/playit/playit.toml ]; then
     echo "[Playit] No config found, claiming new tunnel..."
-    $AGENT_BIN claim --yes
-    sleep 5
-    if [ -f ~/.config/playit/playit.toml ]; then
-        aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Failed to backup .toml"
-        echo "[Playit] Tunnel claimed and config uploaded."
-    fi
-    # Save claim URL
-    claim_url=$(grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' playit.log | head -n1)
+    claim_url=$($AGENT_BIN --claim-token 2>&1 | grep -o 'https://playit.gg/claim/[A-Za-z0-9]*' | head -n1)
+
     if [ -n "$claim_url" ]; then
         echo "$claim_url" > links/playit_claim.txt
-        aws --endpoint-url=https://s3.filebase.com s3 cp links/playit_claim.txt s3://$FILEBASE_BUCKET/playit_claim.txt || echo "[Playit] Failed to backup claim link"
+        git add links/playit_claim.txt
+        git commit -m "Playit claim link $(date -u)" || true
+        git push origin main || true
+
+        aws --endpoint-url=https://s3.filebase.com s3 cp links/playit_claim.txt s3://$FILEBASE_BUCKET/playit_claim.txt || true
         echo "[Playit] Claim link saved: $claim_url"
+    else
+        echo "[Playit] Failed to get claim URL, check logs."
     fi
+
+    echo "[Playit] Waiting for you to claim at: $claim_url"
+    for i in {1..60}; do
+        if [ -f ~/.config/playit/playit.toml ]; then
+            aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Failed to backup .toml"
+            echo "[Playit] Tunnel claimed and config uploaded."
+            break
+        fi
+        sleep 5
+    done
 fi
 
-# ------------------------------
-# Background loop: Refresh tmate SSH every 15 minutes
-# ------------------------------
-(
-while true; do
-    echo "[TMATE] Refreshing SSH link at $(date -u)"
-    pkill tmate || true
-    tmate -S /tmp/tmate.sock new-session -d
-    tmate -S /tmp/tmate.sock wait tmate-ready 30 || true
-    sleep 5
-    TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-    echo "$TMATE_SSH" > links/ssh.txt
-    git fetch origin main
-    git reset --hard origin/main
-    git add links/ssh.txt
-    git commit -m "Updated SSH link $(date -u)" || true
-    git push origin main || true
-    sleep 900  # 15 minutes
-done
-) &
-
-# ------------------------------
-# Main loop: Backup Minecraft server every 30 minutes
-# ------------------------------
+# =========================
+# Main Loop
+# =========================
 LOOP=0
 while true; do
-    if (( LOOP % 2 == 0 )); then
-        echo "[Backup] Starting Minecraft server backup at $(date -u)"
-        if [ -d server ]; then
-            cd server
-            zip -r ../mcbackup.zip . >/dev/null
-            cd ..
-            n=0
-            until [ $n -ge 3 ]; do
-                aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
-                echo "[Backup] Upload failed. Retry in 30s..."
-                sleep 30
-                n=$((n+1))
-            done
-            echo "[Backup] Minecraft server backup done."
-        fi
-        # Backup Playit config too
-        if [ -f ~/.config/playit/playit.toml ]; then
-            aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
-        fi
+  # Kill old tmate if exists
+  pkill tmate || true
+
+  # Start new tmate session
+  tmate -S /tmp/tmate.sock new-session -d
+  sleep 5
+  TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+
+  echo "$TMATE_SSH" > links/ssh.txt
+
+  # Git pull → add → commit → push
+  git pull --rebase origin main || true
+  git add links/ssh.txt
+  git commit -m "Updated SSH link $(date -u)" || true
+  git push origin main || true
+
+  echo "[SSH] New SSH link pushed at $(date -u): $TMATE_SSH"
+
+  # Backup every 30 mins (every 2 loops)
+  if (( LOOP % 2 == 0 )); then
+    echo "[Backup] Starting backup at $(date -u)"
+    cd server || exit 1
+    zip -r ../mcbackup.zip . >/dev/null
+    cd ..
+
+    # Upload with retry
+    n=0
+    until [ $n -ge 3 ]; do
+      aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
+      echo "[Backup] Upload failed. Retry in 30s..."
+      sleep 30
+      n=$((n+1))
+    done
+
+    if [ $n -eq 3 ]; then
+      echo "[Backup] Failed to upload after 3 attempts!"
+    else
+      echo "[Backup] Uploaded to Filebase at $(date -u)"
     fi
-    LOOP=$((LOOP + 1))
-    sleep 900  # 15 minutes, so backups happen every 30 mins (every 2 loops)
+  fi
+
+  LOOP=$((LOOP + 1))
+  echo "[Loop] Sleeping 15 minutes before next refresh..."
+  sleep 900
 done
