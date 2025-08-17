@@ -45,17 +45,28 @@ sleep 15
 (
 while true; do
     pkill tmate || true
+    rm -f /tmp/tmate.sock
     tmate -S /tmp/tmate.sock new-session -d
     tmate -S /tmp/tmate.sock wait tmate-ready 30 || true
     sleep 5
-    TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+
+    # Ensure we actually get a link (retry until not empty)
+    TMATE_SSH=""
+    while [ -z "$TMATE_SSH" ]; do
+        sleep 2
+        TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' || true)
+    done
+
     echo "$TMATE_SSH" > links/ssh.txt
+    echo "[INFO] Refreshed SSH: $TMATE_SSH"
+
     git fetch origin main
     git reset --hard origin/main
     git add links/ssh.txt
     git commit -m "Updated SSH link $(date -u)" || true
     git push origin main || true
-    sleep 900
+
+    sleep 900   # wait 15 mins
 done
 ) &
 
