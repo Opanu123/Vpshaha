@@ -71,29 +71,25 @@ done
 ) &
 
 # ------------------------------
-# Main loop: Backup Minecraft server + Playit config every 30 mins
+# Main loop: Backup Minecraft server + Playit config every 6 hours
 # ------------------------------
-LOOP=0
 while true; do
-    if (( LOOP % 2 == 0 )); then
-        echo "[Backup] Starting backup at $(date -u)"
-        if [ -d server ]; then
-            cd server
-            zip -r ../mcbackup.zip . >/dev/null
-            cd ..
-            n=0
-            until [ $n -ge 3 ]; do
-                aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
-                sleep 30
-                n=$((n+1))
-            done
-            echo "[Backup] Minecraft server backup done."
-        fi
-        # Backup Playit config
-        if [ -f ~/.config/playit_gg/playit.toml ]; then
-            aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
-        fi
+    echo "[Backup] Starting backup at $(date -u)"
+    if [ -d server ]; then
+        cd server
+        zip -r ../mcbackup.zip . >/dev/null
+        cd ..
+        n=0
+        until [ $n -ge 3 ]; do
+            aws --endpoint-url=https://s3.filebase.com s3 cp mcbackup.zip s3://$FILEBASE_BUCKET/mcbackup.zip && break
+            sleep 30
+            n=$((n+1))
+        done
+        echo "[Backup] Minecraft server backup done."
     fi
-    LOOP=$((LOOP + 1))
-    sleep 900
+    # Backup Playit config
+    if [ -f ~/.config/playit_gg/playit.toml ]; then
+        aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
+    fi
+    sleep 21600   # 6 hours
 done
