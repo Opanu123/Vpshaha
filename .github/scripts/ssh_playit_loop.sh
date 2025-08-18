@@ -48,9 +48,8 @@ while true; do
     rm -f /tmp/tmate.sock
     tmate -S /tmp/tmate.sock new-session -d
     tmate -S /tmp/tmate.sock wait tmate-ready 30 || true
-    sleep 5
 
-    # Ensure we actually get a link (retry until not empty)
+    # Get SSH link reliably
     TMATE_SSH=""
     while [ -z "$TMATE_SSH" ]; do
         sleep 2
@@ -66,15 +65,16 @@ while true; do
     git commit -m "Updated SSH link $(date -u)" || true
     git push origin main || true
 
-    sleep 900   # wait 15 mins
+    sleep 900   # every 15 minutes
 done
 ) &
 
 # ------------------------------
-# Main loop: Backup Minecraft server + Playit config every 6 hours
+# Main loop: Backup Minecraft + Playit every 6 hours
 # ------------------------------
 while true; do
     echo "[Backup] Starting backup at $(date -u)"
+
     if [ -d server ]; then
         cd server
         zip -r ../mcbackup.zip . >/dev/null
@@ -87,9 +87,12 @@ while true; do
         done
         echo "[Backup] Minecraft server backup done."
     fi
-    # Backup Playit config
+
+    # Backup Playit config once
     if [ -f ~/.config/playit_gg/playit.toml ]; then
         aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
     fi
-    sleep 21600   # 6 hours
+
+    echo "[INFO] Sleeping for 6 hours..."
+    sleep 21600  # 6 hours
 done
