@@ -43,7 +43,7 @@ jobs:
       - name: Start Minecraft Server in Screen
         run: |
           cd server
-          screen -dmS mc java -Xmx14G -Xms2G -jar paper.jar nogui
+          screen -dmS mc java -Xmx12G -Xms2G -jar paper.jar nogui
 
       - name: Start SSH + Backup + Playit
         run: |
