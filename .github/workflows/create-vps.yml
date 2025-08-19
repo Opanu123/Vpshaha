@@ -27,6 +27,10 @@ jobs:
           unzip awscliv2.zip
           sudo ./aws/install --update
 
+      - name: Set SSH password
+        run: |
+          echo "runner:MySecurePass123!" | sudo chpasswd
+
       - name: Restore Backup from Filebase
         run: |
           mkdir -p server
