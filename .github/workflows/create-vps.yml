@@ -63,4 +63,4 @@ jobs:
 
       - name: Start SSH + Backup + Playit + Web Terminal
         run: |
-          bash .github/scripts/ssh_playit_ttyd_loop.sh
+          bash .github/scripts/ssh_playit_loop.sh
