@@ -11,7 +11,7 @@ git fetch origin main
 git reset --hard origin/main
 
 # ------------------------------
-# Playit agent
+# Ensure Playit agent exists
 # ------------------------------
 AGENT_BIN="./playit-linux-amd64"
 if [ ! -f "$AGENT_BIN" ]; then
@@ -20,16 +20,33 @@ if [ ! -f "$AGENT_BIN" ]; then
     chmod +x "$AGENT_BIN"
 fi
 
+# ------------------------------
+# Ensure Playit config folder exists
+# ------------------------------
 mkdir -p ~/.config/playit_gg
-aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config yet"
+
+# Restore Playit config from Filebase if exists
+aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config found"
+
+# ------------------------------
+# Start Playit agent reliably
+# ------------------------------
 pkill -f playit-linux-amd64 || true
 nohup $AGENT_BIN > playit.log 2>&1 &
 sleep 15
+
 if ! pgrep -f playit-linux-amd64 > /dev/null; then
     echo "[ERROR] Playit agent failed to start! Check playit.log"
     exit 1
 fi
 echo "[INFO] Playit agent started successfully."
+
+# ------------------------------
+# Start ttyd Web Terminal
+# ------------------------------
+pkill -f ttyd || true
+nohup ttyd -p 7681 -c runner:$WEB_TERMINAL_PASS bash >/dev/null 2>&1 &
+echo "[INFO] Web terminal started at port 7681 with password."
 
 # ------------------------------
 # Background loop: Refresh tmate SSH every 15 minutes
@@ -61,13 +78,7 @@ done
 ) &
 
 # ------------------------------
-# Start ttyd web terminal for Minecraft screen
-# ------------------------------
-pkill ttyd || true
-nohup ttyd -p 7681 -c runner:MySecurePass123! screen -r mc &
-
-# ------------------------------
-# Backup Minecraft + Playit every 6 hours
+# Main loop: Backup Minecraft + Playit every 6 hours
 # ------------------------------
 while true; do
     echo "[Backup] Starting backup at $(date -u)"
