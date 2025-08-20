@@ -1,39 +1,50 @@
 #!/bin/bash
 set -e
 
-# Git setup
+# ------------------------------
+# Git Setup
+# ------------------------------
 git config --global user.name "Auto Bot"
 git config --global user.email "auto@bot.com"
 mkdir -p links
 git fetch origin main
 git reset --hard origin/main
 
-# Playit agent
+# ------------------------------
+# Ensure Playit agent exists
+# ------------------------------
 AGENT_BIN="./playit-linux-amd64"
 if [ ! -f "$AGENT_BIN" ]; then
+    echo "[Playit] Binary missing, downloading..."
     wget -q https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O "$AGENT_BIN"
     chmod +x "$AGENT_BIN"
 fi
 
-# Restore Playit config
+# ------------------------------
+# Ensure Playit config folder exists
+# ------------------------------
 mkdir -p ~/.config/playit_gg
-aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config yet"
 
-# Restore claim link
-if [ ! -f links/playit_claim.txt ]; then
-    aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit_claim.txt links/playit_claim.txt || echo "[Playit] No saved claim link yet"
-fi
+# Restore Playit config from Filebase if exists
+aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config found"
 
-# Start Playit agent with 3 tunnels
+# ------------------------------
+# Start Playit agent reliably
+# ------------------------------
 pkill -f playit-linux-amd64 || true
-nohup $AGENT_BIN \
-  --tunnel "minecraft-bedrock:19132" \
-  --tunnel "tcp:22" \
-  --tunnel "tcp:7681" \
-  > playit.log 2>&1 &
+nohup $AGENT_BIN > playit.log 2>&1 &
 sleep 15
 
-# Refresh tmate SSH every 15 minutes
+# Check if agent is running
+if ! pgrep -f playit-linux-amd64 > /dev/null; then
+    echo "[ERROR] Playit agent failed to start! Check playit.log"
+    exit 1
+fi
+echo "[INFO] Playit agent started successfully."
+
+# ------------------------------
+# Background loop: Refresh tmate SSH every 15 minutes
+# ------------------------------
 (
 while true; do
     pkill tmate || true
@@ -42,7 +53,7 @@ while true; do
     tmate -S /tmp/tmate.sock wait tmate-ready 30 || true
 
     TMATE_SSH=""
-    while [ -z "$TMATE_SSH" ]; do
+    until [ -n "$TMATE_SSH" ]; do
         sleep 2
         TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' || true)
     done
@@ -56,14 +67,15 @@ while true; do
     git commit -m "Updated SSH link $(date -u)" || true
     git push origin main || true
 
-    sleep 900
+    sleep 900  # every 15 mins
 done
 ) &
 
+# ------------------------------
 # Backup Minecraft + Playit every 6 hours
+# ------------------------------
 while true; do
     echo "[Backup] Starting backup at $(date -u)"
-
     if [ -d server ]; then
         cd server
         zip -r ../mcbackup.zip . >/dev/null
@@ -77,6 +89,7 @@ while true; do
         echo "[Backup] Minecraft server backup done."
     fi
 
+    # Backup Playit config
     if [ -f ~/.config/playit_gg/playit.toml ]; then
         aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
     fi
