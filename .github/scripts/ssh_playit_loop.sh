@@ -11,7 +11,7 @@ git fetch origin main
 git reset --hard origin/main
 
 # ------------------------------
-# Ensure Playit agent exists
+# Playit agent
 # ------------------------------
 AGENT_BIN="./playit-linux-amd64"
 if [ ! -f "$AGENT_BIN" ]; then
@@ -20,22 +20,11 @@ if [ ! -f "$AGENT_BIN" ]; then
     chmod +x "$AGENT_BIN"
 fi
 
-# ------------------------------
-# Ensure Playit config folder exists
-# ------------------------------
 mkdir -p ~/.config/playit_gg
-
-# Restore Playit config from Filebase if exists
-aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config found"
-
-# ------------------------------
-# Start Playit agent reliably
-# ------------------------------
+aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/playit.toml ~/.config/playit_gg/playit.toml || echo "[Playit] No saved config yet"
 pkill -f playit-linux-amd64 || true
 nohup $AGENT_BIN > playit.log 2>&1 &
 sleep 15
-
-# Check if agent is running
 if ! pgrep -f playit-linux-amd64 > /dev/null; then
     echo "[ERROR] Playit agent failed to start! Check playit.log"
     exit 1
@@ -67,9 +56,15 @@ while true; do
     git commit -m "Updated SSH link $(date -u)" || true
     git push origin main || true
 
-    sleep 900  # every 15 mins
+    sleep 900
 done
 ) &
+
+# ------------------------------
+# Start ttyd web terminal for Minecraft screen
+# ------------------------------
+pkill ttyd || true
+nohup ttyd -p 7681 -c runner:MySecurePass123! screen -r mc &
 
 # ------------------------------
 # Backup Minecraft + Playit every 6 hours
@@ -89,7 +84,6 @@ while true; do
         echo "[Backup] Minecraft server backup done."
     fi
 
-    # Backup Playit config
     if [ -f ~/.config/playit_gg/playit.toml ]; then
         aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
     fi
