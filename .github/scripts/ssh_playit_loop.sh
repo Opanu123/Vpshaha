@@ -35,6 +35,7 @@ pkill -f playit-linux-amd64 || true
 nohup $AGENT_BIN > playit.log 2>&1 &
 sleep 15
 
+# Check if agent is running
 if ! pgrep -f playit-linux-amd64 > /dev/null; then
     echo "[ERROR] Playit agent failed to start! Check playit.log"
     exit 1
@@ -42,11 +43,20 @@ fi
 echo "[INFO] Playit agent started successfully."
 
 # ------------------------------
-# Start ttyd Web Terminal
+# Install ttyd (web terminal)
 # ------------------------------
-pkill -f ttyd || true
-nohup ttyd -p 7681 -c runner:$WEB_TERMINAL_PASS bash >/dev/null 2>&1 &
-echo "[INFO] Web terminal started at port 7681 with password."
+if ! command -v ttyd &>/dev/null; then
+    echo "[Setup] Installing ttyd..."
+    sudo apt-get update -y
+    sudo apt-get install -y ttyd
+fi
+
+# ------------------------------
+# Start ttyd (no login, direct bash)
+# ------------------------------
+pkill -f "ttyd" || true
+nohup ttyd -p 7681 bash > ttyd.log 2>&1 &
+echo "[INFO] ttyd web terminal started on port 7681"
 
 # ------------------------------
 # Background loop: Refresh tmate SSH every 15 minutes
@@ -73,12 +83,12 @@ while true; do
     git commit -m "Updated SSH link $(date -u)" || true
     git push origin main || true
 
-    sleep 900
+    sleep 900  # every 15 mins
 done
 ) &
 
 # ------------------------------
-# Main loop: Backup Minecraft + Playit every 6 hours
+# Backup Minecraft + Playit every 6 hours
 # ------------------------------
 while true; do
     echo "[Backup] Starting backup at $(date -u)"
@@ -95,6 +105,7 @@ while true; do
         echo "[Backup] Minecraft server backup done."
     fi
 
+    # Backup Playit config
     if [ -f ~/.config/playit_gg/playit.toml ]; then
         aws --endpoint-url=https://s3.filebase.com s3 cp ~/.config/playit_gg/playit.toml s3://$FILEBASE_BUCKET/playit.toml || echo "[Playit] Backup failed"
     fi
