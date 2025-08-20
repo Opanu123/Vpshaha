@@ -14,6 +14,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
       FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
+      WEB_TERMINAL_PASS: MySecurePass123!   # password for ttyd
 
     steps:
       - name: Checkout Repo
@@ -22,26 +23,14 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen \
-                              cmake g++ git libjson-c-dev libwebsockets-dev libssl-dev pkg-config
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen ttyd
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-      - name: Install ttyd
-        run: |
-          git clone https://github.com/tsl0922/ttyd.git
-          cd ttyd
-          mkdir build
-          cd build
-          cmake ..
-          make
-          sudo make install
-          cd ../../
-
       - name: Set SSH password
         run: |
-          echo "runner:MySecurePass123!" | sudo chpasswd
+          echo "runner:$WEB_TERMINAL_PASS" | sudo chpasswd
 
       - name: Restore Backup from Filebase
         run: |
