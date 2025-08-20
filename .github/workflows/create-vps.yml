@@ -1,4 +1,4 @@
-name: Minecraft Server with Auto Backup + SSH + Playit
+name: Minecraft Server with Auto Backup + SSH + Playit + Web Terminal
 
 on:
   workflow_dispatch:
@@ -22,10 +22,22 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen \
+                              cmake g++ git libjson-c-dev libwebsockets-dev libssl-dev pkg-config
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
+
+      - name: Install ttyd
+        run: |
+          git clone https://github.com/tsl0922/ttyd.git
+          cd ttyd
+          mkdir build
+          cd build
+          cmake ..
+          make
+          sudo make install
+          cd ../../
 
       - name: Set SSH password
         run: |
@@ -49,6 +61,6 @@ jobs:
           cd server
           screen -dmS mc java -Xmx12G -Xms2G -jar paper.jar nogui
 
-      - name: Start SSH + Backup + Playit
+      - name: Start SSH + Backup + Playit + Web Terminal
         run: |
-          bash .github/scripts/ssh_playit_loop.sh
+          bash .github/scripts/ssh_playit_ttyd_loop.sh
