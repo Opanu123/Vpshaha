@@ -1,4 +1,4 @@
-name: Minecraft Server with Auto Backup + SSH + Playit + Web Terminal
+name: Minecraft Server with Auto Backup + SSH + Playit
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
       FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
-      WEB_TERMINAL_PASS: MySecurePass123!   # password for ttyd
 
     steps:
       - name: Checkout Repo
@@ -23,20 +22,20 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen ttyd
+          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
 
       - name: Set SSH password
         run: |
-          echo "runner:$WEB_TERMINAL_PASS" | sudo chpasswd
+          echo "runner:MySecurePass123!" | sudo chpasswd
 
       - name: Restore Backup from Filebase
         run: |
           mkdir -p server
           cd server
-          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || exit 0
+          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || echo "No backup found"
           unzip -o mcbackup.zip || echo "No backup found"
 
       - name: Download PaperMC
@@ -50,6 +49,6 @@ jobs:
           cd server
           screen -dmS mc java -Xmx12G -Xms2G -jar paper.jar nogui
 
-      - name: Start SSH + Backup + Playit + Web Terminal
+      - name: Start SSH + Backup + Playit
         run: |
           bash .github/scripts/ssh_playit_loop.sh
