@@ -1,4 +1,4 @@
-name: Minecraft Server with Auto Backup + SSH + Playit
+name: VPS Auto Backup Starter
 
 on:
   workflow_dispatch:
@@ -6,50 +6,36 @@ on:
     - cron: "0 */6 * * *"  # Every 6 hours
 
 jobs:
-  minecraft:
+  backup:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
-    env:  
-      AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}  
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}  
-      FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}  
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.FILEBASE_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.FILEBASE_SECRET_KEY }}
+      FILEBASE_BUCKET: ${{ secrets.FILEBASE_BUCKET }}
 
-    steps:  
-      - name: Checkout Repo  
-        uses: actions/checkout@v4  
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
 
-      - name: Install Dependencies  
-        run: |  
-          sudo apt update  
-          sudo apt install -y openjdk-17-jre tmate unzip curl zip screen wget  
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"  
-          unzip awscliv2.zip  
-          sudo ./aws/install --update  
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y zip unzip curl wget
 
-      - name: Set SSH password  
-        run: |  
-          echo "runner:MySecurePass123!" | sudo chpasswd  
+          # Install AWS CLI
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
 
-      - name: Restore Backup from Filebase  
-        run: |  
-          mkdir -p server  
-          cd server  
-          aws --endpoint-url=https://s3.filebase.com s3 cp s3://$FILEBASE_BUCKET/mcbackup.zip mcbackup.zip || exit 0  
-          unzip -o mcbackup.zip || echo "No backup found"  
+      - name: Prepare VPS Folder
+        run: |
+          mkdir -p vps_data
+          # You can put starter files here if you want
+          echo "This is a starter VPS folder" > vps_data/readme.txt
 
-      - name: Download PaperMC  
-        run: |  
-          cd server  
-          curl -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.1/builds/183/downloads/paper-1.20.1-183.jar  
-          echo "eula=true" > eula.txt  
-
-      - name: Start Minecraft Server in Screen  
-        run: |  
-          cd server  
-          screen -dmS mc java -Xmx12G -Xms2G -jar paper.jar nogui  
-
-      - name: Start SSH + Backup + Playit  
-        run: |  
-          chmod +x .github/scripts/ssh_playit_loop.sh  
-          bash .github/scripts/ssh_playit_loop.sh
+      - name: Backup to Filebase
+        run: |
+          zip -r vps_backup.zip vps_data
+          aws --endpoint-url=https://s3.filebase.com s3 cp vps_backup.zip s3://$FILEBASE_BUCKET/vps_backup.zip
